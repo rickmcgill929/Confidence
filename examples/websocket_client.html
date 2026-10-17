@@ -1,0 +1,27 @@
+<!doctype html>
+<!-- Minimal browser client for `dsan serve`. Open this file, or host it anywhere:
+     CORS is open. Change SERVER if the API runs on another machine. -->
+<html lang="en"><head><meta charset="utf-8"><title>dsan WebSocket client</title>
+<style>body{font:14px ui-monospace,Menlo,monospace;background:#111;color:#ddd;padding:20px}
+button{font:inherit;padding:6px 14px;margin-right:6px}#t{font-size:64px;margin:16px 0}</style></head>
+<body>
+<div id="link">connecting…</div>
+<div id="t">--:--</div>
+<button data-cmd="reverse">◁ Prev</button><button data-cmd="forward">Next ▷</button>
+<button data-cmd="blank_on">Blank on</button><button data-cmd="blank_off">Blank off</button>
+<pre id="log"></pre>
+<script>
+const SERVER = "ws://localhost:8765/api/v1/ws";   // add ?token=SECRET if you used --token
+const ws = new WebSocket(SERVER);
+let id = 0;
+const show = s => { const p = s.programs[s.selected - 1]; document.getElementById("t").textContent = `P${p.number}  ${p.display}`; };
+ws.onmessage = e => {
+  const m = JSON.parse(e.data);
+  if (m.type === "hello" && m.limitimer?.state) show(m.limitimer.state);
+  if (m.type === "limitimer.state") show(m.state);
+  if (m.type === "limitimer.link" || m.type === "hello") document.getElementById("link").textContent = "link: " + (m.link ?? m.limitimer?.link);
+  if (m.type === "perfectcue.button" || m.type === "result") document.getElementById("log").textContent = JSON.stringify(m) + "\n" + document.getElementById("log").textContent;
+};
+document.querySelectorAll("button").forEach(b => b.onclick = () =>
+  ws.send(JSON.stringify({type: "perfectcue.command", command: b.dataset.cmd, id: ++id})));
+</script></body></html>

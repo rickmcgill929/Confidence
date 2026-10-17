@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dsan"
+version = "0.1.0"
+description = "Read DSAN Limitimer stage timers and drive Perfect Cue presentation remotes — Python library, HTTP/WebSocket API and OSC bridge"
+readme = "README.md"
+requires-python = ">=3.9"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Rick McGill", email = "rickmcgill929@gmail.com" }]
+keywords = ["dsan", "limitimer", "perfect cue", "perfectcue", "rs-485", "stage timer", "osc", "broadcast", "live events"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+    "Topic :: Multimedia :: Video",
+    "Topic :: System :: Hardware",
+]
+dependencies = ["pyserial>=3.5"]
+
+[project.optional-dependencies]
+osc = ["python-osc>=1.8"]
+server = ["aiohttp>=3.9"]
+viewer = ["PyQt6>=6.5", "python-osc>=1.8"]
+all = ["python-osc>=1.8", "aiohttp>=3.9", "PyQt6>=6.5"]
+dev = ["pytest>=7", "python-osc>=1.8", "aiohttp>=3.9"]
+
+[project.scripts]
+dsan = "dsan.cli:main"
+
+[project.gui-scripts]
+dsan-viewer = "dsan.viewer:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
