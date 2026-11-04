@@ -13,8 +13,9 @@ Layers, use whichever you need:
 * ``dsan.osc.OscBridge`` — OSC output (``pip install dsan[osc]``)
 * ``dsan.server.DsanServer`` — HTTP + WebSocket API (``pip install dsan[server]``)
 * ``dsan`` command — ``dsan serve``, ``dsan monitor``, ``dsan send``, ``dsan ports``
+* ``dsan-clock`` — video clock for a Limitimer + Perfect Cue (``pip install dsan[clock]``)
 """
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 from .limitimer import BeepType, Decoder, LimitimerState, PacketEvent, Program
 from .perfectcue import Button, Command

@@ -178,6 +178,46 @@ State updates go out as one OSC bundle per change, so receivers never see half a
 
 ---
 
+## DSAN Clock: video clock for Limitimer + Perfect Cue
+
+`dsan-clock` (`pip install 'dsan[clock]'`) puts the Limitimer countdown, its green/yellow/red phase lights and the Perfect Cue cue arrows on a screen. It runs on macOS and Windows and needs two USB-RS485 adapters, one per device.
+
+![Confidence monitor preset](docs/confidence.png)
+
+**Hardware**
+
+| Adapter | Wired to | Serial settings |
+|---|---|---|
+| USB-RS485 #1 | Limitimer data port | 19200 8N1 (fixed) |
+| USB-RS485 #2 | Perfect Cue receiver data port | 19200 8N1 by default; 9600–115200 selectable |
+
+Wire the device's RS-485 data pair to the adapter's A/B (D+/D−) terminals. Check each device's manual for its RJ45 pinout, because the Limitimer and Perfect Cue pinouts differ. If **Detect** reports *"data is arriving but no valid Limitimer frames"*, swap A and B.
+
+**Inputs**
+- **Detect** listens on every USB adapter. The one carrying Limitimer packets becomes the Limitimer. The Perfect Cue is the remaining adapter, or, if there are more, whichever one sees a button press when the app prompts for it.
+- Adapters are remembered by USB serial number (then by physical USB socket), so `/dev` or `COM` names changing between plugs doesn't swap them. **Swap** fixes a wrong guess by hand.
+- Ports reconnect automatically. If Limitimer data stops for 2 seconds, timers show **NO SIGNAL** instead of freezing. You choose how: dim, text, hide, or keep the last time.
+- **Demo** runs simulated devices through the real decoder. **Test cue** buttons fire cue states by hand.
+- The Perfect Cue is input-only here. Sending LED commands goes through the receiver's separate RS-232 port (`PerfectCue.forward()` etc. in the library).
+
+**Output**
+- **Full screen** on any display, for a confidence monitor.
+- **Window**, for capture into NDI or OBS.
+- **Overlay**: transparent, always on top and click-through, over PowerPoint, Keynote or anything else. On macOS, pyobjc (installed with the `clock` extra) lets it float over full-screen slideshows.
+
+**Layouts**
+- Elements: timer digits, phase lights, Perfect Cue indicator (◁ ● ▷ arrows, full-screen colour light, or text), progress bar, time of day, labels (`{program}`, `{mode}` tokens) and an operator message.
+- Drag to move, drag the corner to resize, arrow keys to nudge. Every element has its own colours, background with alpha, corner radius, font and alignment.
+- Timers follow the Limitimer's selected program or a fixed program. Overtime and DIP 2/3 format are set per element.
+- Presets: *Confidence monitor*, *Corner overlay*, *Cue light*, *Timer + time of day*, *All four programs*.
+- Layouts save as JSON. Custom `.ttf`/`.otf` fonts can be bundled with a layout.
+- Digits are drawn in fixed-width cells, so a running clock never shifts sideways, whatever the font.
+
+**Operator**
+- Message bar with quick buttons (WRAP UP, 1 MINUTE, PLEASE STOP).
+- Optional OSC out (the same address map as above).
+- Everything is remembered between launches. There's also *Connect on launch*.
+
 ## Desktop viewer
 
 `dsan-viewer` is the PyQt6 app: four program displays, DIP switch readout, the Perfect Cue panel, OSC output, a debug console, and Demo mode (the simulator). Its port fields accept `socket://host:port` too.
