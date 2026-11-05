@@ -1,6 +1,6 @@
-"""DSAN Clock — an on-screen video clock for a Limitimer and a Perfect Cue.
+"""Confidence — show timing on screen and SDI: a DSAN Limitimer and Perfect Cue, and Millumin.
 
-Run ``dsan-clock`` (``pip install 'dsan[clock]'``). The pieces are usable on their own:
+Run ``confidence`` (``pip install 'dsan[clock]'``). The pieces are usable on their own:
 
 * :mod:`dsan.clock.layout` — layouts, elements, presets, JSON (no Qt)
 * :mod:`dsan.clock.ports`  — remembering USB adapters and detecting which is which (no Qt)

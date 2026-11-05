@@ -324,7 +324,7 @@ class PerfectCueWidget(QGroupBox):
         for rate in (9600, 19200, 38400, 57600, 115200):
             self.baud_combo.addItem(str(rate), rate)
         self.baud_combo.setCurrentIndex(self.baud_combo.findData(pc.BAUDRATE))
-        self.baud_combo.setToolTip("Perfect Cue receiver ASCII API is 9600-8-N-1")
+        self.baud_combo.setToolTip("Perfect Cue data link is 19200-8-N-1 (receiver ASCII API: 9600)")
         row.addWidget(self.baud_combo)
         self.connect_btn = QPushButton("Connect")
         self.connect_btn.setFixedWidth(120)

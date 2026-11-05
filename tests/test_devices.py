@@ -160,3 +160,26 @@ def test_send_while_closed_returns_false():
 def test_requires_port_or_factory():
     with pytest.raises(ValueError):
         Limitimer()
+
+
+def test_perfectcue_defaults_to_19200_and_lights_leds():
+    from dsan import perfectcue as pc
+    assert pc.BAUDRATE == 19200 and pc.RECEIVER_BAUDRATE == 9600
+    assert PerfectCue("/dev/does-not-exist", reconnect=False).baudrate == 19200
+    assert pc.Led.NEXT.value == b"\r" and pc.Led.BLANK_ON.value == b"R" and pc.Led.BLANK_OFF.value == b"E"
+    assert pc.Led.parse("previous") is pc.Led.PREV and pc.Led.parse("blank-off") is pc.Led.BLANK_OFF
+    assert pc.Led.for_button(Button.BLANK_ON) is pc.Led.BLANK_ON
+    with pytest.raises(ValueError):
+        pc.Led.parse("purple")
+    ports = []
+
+    def factory():
+        from dsan.sim import PerfectCueSimulator
+        p = PerfectCueSimulator(interval=10)
+        ports.append(p)
+        return p
+
+    with PerfectCue(transport_factory=factory, reconnect=False) as cue:
+        assert wait(lambda: ports)
+        assert cue.light(pc.Led.NEXT) and cue.light(Button.PREV) and cue.light("blank_on")
+    assert ports[0].written == [b"\r", b"\x1b[D", b"R"]

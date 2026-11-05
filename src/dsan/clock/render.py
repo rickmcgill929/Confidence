@@ -14,7 +14,8 @@ from PyQt6.QtGui import (QBrush, QColor, QFont, QFontDatabase, QFontMetricsF, QP
 from ..devices import LinkState
 from ..limitimer import LimitimerState
 from ..perfectcue import Button
-from .layout import Element, Layout, expand_tokens, parse_color, phase, resolve_program
+from ..millumin import MilluminView, format_time
+from .layout import Element, Layout, expand_tokens, millumin_phase, parse_color, phase, resolve_program
 
 
 @dataclass
@@ -49,6 +50,9 @@ class Frame:
     link: LinkState = LinkState.CLOSED
     cue: CueState = field(default_factory=CueState)
     message: str = ""
+    millumin: Optional[MilluminView] = None
+    mm_yellow: float = 30.0          # Millumin: seconds left that turn timers yellow …
+    mm_red: float = 10.0             # … and red
     now: float = field(default_factory=time.monotonic)
     wall: _dt.datetime = field(default_factory=_dt.datetime.now)
 
@@ -188,7 +192,10 @@ class Renderer:
     # -- entry point ---------------------------------------------------------------
 
     def paint(self, p: QPainter, area: QRectF, layout: Layout, frame: Frame, *,
-              editing: bool = False, selected: Optional[str] = None) -> None:
+              editing: bool = False, selected=None, px_scale: float = 1.0) -> None:
+        """``px_scale``: drawing units per output pixel (1 for the real output; smaller
+        for the scaled-down editor preview). Used for sizes given in pixels."""
+        self._px = px_scale if px_scale > 0 else 1.0
         p.save()
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         p.setRenderHint(QPainter.RenderHint.TextAntialiasing)
@@ -208,23 +215,20 @@ class Renderer:
             self._guides(p, area, layout, selected)
         p.restore()
 
-    def _guides(self, p: QPainter, area: QRectF, layout: Layout, selected: Optional[str]) -> None:
+    def _guides(self, p: QPainter, area: QRectF, layout: Layout, selected) -> None:
+        """Outline every element; selected ones in teal. ``selected`` is an id or a set of ids."""
+        sel = {selected} if isinstance(selected, str) else set(selected or ())
         p.setBrush(Qt.BrushStyle.NoBrush)
         for e in layout.elements:
             if not e.visible:
                 continue
             r = QRectF(area.left() + e.x * area.width(), area.top() + e.y * area.height(),
                        e.w * area.width(), e.h * area.height())
-            if e.id == selected:
+            if e.id in sel:
                 p.setPen(QPen(_SELECT, 2))
-                p.drawRect(r)
-                p.setBrush(_SELECT)
-                p.drawRect(QRectF(r.right() - 8, r.bottom() - 8, 10, 10))
-                p.setBrush(Qt.BrushStyle.NoBrush)
             else:
-                pen = QPen(_GUIDE, 1, Qt.PenStyle.DashLine)
-                p.setPen(pen)
-                p.drawRect(r)
+                p.setPen(QPen(_GUIDE, 1, Qt.PenStyle.DashLine))
+            p.drawRect(r)
 
     # -- elements ------------------------------------------------------------------
 
@@ -234,7 +238,30 @@ class Renderer:
     def _no_signal(self, layout: Layout, frame: Frame) -> bool:
         return frame.state is not None and not frame.live and layout.no_signal != "ignore"
 
+    def _mm_phase(self, frame: Frame) -> str:
+        return millumin_phase(frame.millumin, frame.mm_yellow, frame.mm_red)
+
+    def _draw_mm_timer(self, p, rect, e, layout, frame, editing):
+        self._bg(p, rect, e)
+        v = frame.millumin
+        if v is None:                        # nothing on the layer: blank (placeholder while editing)
+            if editing:
+                self._text(p, rect, "--:--", e, self.qcolor(layout.color("dim")).lighter(250))
+            return
+        if e.mm_show == "elapsed":
+            text = format_time(v.elapsed)
+        elif e.mm_show == "duration":
+            text = format_time(v.duration)
+        else:
+            text = format_time(v.remaining, round_up=True)
+        color = self._phase_color(layout, self._mm_phase(frame)) if e.phase_colors else self.qcolor(e.color)
+        if not v.live and v.state != "playing":
+            color = _NO_SIGNAL_DIM
+        self._text(p, rect, text, e, color)
+
     def _draw_timer(self, p, rect, e, layout, frame, blink_on, slow_on, editing):
+        if e.source == "millumin":
+            return self._draw_mm_timer(p, rect, e, layout, frame, editing)
         prog = resolve_program(frame.state, e.source)
         if self._no_signal(layout, frame) and layout.no_signal == "hide" and not editing:
             return
@@ -253,7 +280,7 @@ class Renderer:
             tag = Element("label", align="left", bold=True)
             self._text(p, badge, "NO SIGNAL", tag, red, digits=False)
             return
-        if prog.blink and not blink_on:
+        if e.follow_blink and prog.blink and not blink_on:
             return
         color = self._phase_color(layout, phase(prog)) if e.phase_colors else self.qcolor(e.color)
         self._text(p, rect, text, e, color)
@@ -262,12 +289,15 @@ class Renderer:
         self._bg(p, rect, e)
         prog = resolve_program(frame.state, e.source)
         lit = None
+        if e.source == "millumin":
+            lit = {"running": 0, "warning": 1, "expired": 2}.get(self._mm_phase(frame))
+            prog = None
         if prog is not None and not self._no_signal(layout, frame):
             ph = phase(prog)
             lit = {"running": 0, "warning": 1, "expired": 2}.get(ph)
             if lit is None and e.show_idle and prog.remaining > 0:
                 lit = 0
-            if prog.blink and not blink_on:
+            if e.follow_blink and prog.blink and not blink_on:
                 lit = None
         colors = [self.qcolor(layout.color(k)) for k in ("running", "warning", "expired")]
         off = self.qcolor(layout.color("dim"))
@@ -302,6 +332,13 @@ class Renderer:
         active = frame.cue.active(e.hold, frame.now)
         off = self.qcolor(layout.color("dim"))
         col = {"next": layout.color("next"), "prev": layout.color("prev"), "blank": layout.color("blank")}
+        if e.cue_style == "frame":
+            t = max(1.0, e.frame_px * getattr(self, "_px", 1.0))
+            if active:
+                self._frame_outline(p, rect, e, t, self.qcolor(col[active]))
+            elif editing:
+                self._frame_outline(p, rect, e, t, off)
+            return
         if e.cue_style == "light":
             if active:
                 p.fillRect(rect, self.qcolor(col[active]))
@@ -333,22 +370,45 @@ class Renderer:
         p.setBrush(self.qcolor(col["next"]) if active == "next" else off)
         p.drawPolygon(self._arrow(cells[2], right=True))
 
+    def _frame_outline(self, p: QPainter, rect: QRectF, e: Element, t: float, color: QColor) -> None:
+        """An outline of width ``t`` just inside ``rect`` (rounded if the element has a radius)."""
+        t = min(t, rect.width() / 2, rect.height() / 2)
+        rad = e.radius * rect.height()
+        path = QPainterPath()
+        path.setFillRule(Qt.FillRule.OddEvenFill)
+        inner = rect.adjusted(t, t, -t, -t)
+        if rad > 0:
+            path.addRoundedRect(rect, rad, rad)
+            ir = max(0.0, rad - t)
+            path.addRoundedRect(inner, ir, ir)
+        else:
+            path.addRect(rect)
+            path.addRect(inner)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(color)
+        p.drawPath(path)
+
     def _draw_progress(self, p, rect, e, layout, frame, blink_on, slow_on, editing):
         prog = resolve_program(frame.state, e.source)
-        rad = rect.height() / 2
+        rad = min(rect.width(), rect.height()) / 2      # pill ends, horizontal or vertical
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(self.qcolor(e.bg) if self.qcolor(e.bg).alpha() else self.qcolor(layout.color("dim")))
         p.drawRoundedRect(rect, rad, rad)
-        if prog is None or prog.total <= 0 or self._no_signal(layout, frame):
-            return
-        if frame.state.count_down:
-            frac = max(0.0, min(1.0, prog.remaining / prog.total))
+        if e.source == "millumin":
+            v = frame.millumin
+            if v is None or v.fraction is None:
+                return
+            frac = v.fraction if e.bar_fill == "elapsed" else 1.0 - v.fraction   # auto = remaining
+            ph = self._mm_phase(frame)
         else:
-            frac = max(0.0, min(1.0, prog.elapsed / prog.total))
+            if prog is None or prog.total <= 0 or self._no_signal(layout, frame):
+                return
+            frac = progress_fraction(prog, frame.state.count_down, e.bar_fill)
+            ph = phase(prog)
         if frac <= 0:
             return
-        color = self._phase_color(layout, phase(prog)) if e.phase_colors else self.qcolor(e.color)
-        bar = QRectF(rect.left(), rect.top(), rect.width() * frac, rect.height())
+        color = self._phase_color(layout, ph) if e.phase_colors else self.qcolor(e.color)
+        bar = progress_rect(rect, frac, e.bar_direction)
         clip = QPainterPath()
         clip.addRoundedRect(rect, rad, rad)
         p.save()
@@ -370,9 +430,9 @@ class Renderer:
     def _draw_label(self, p, rect, e, layout, frame, blink_on, slow_on, editing):
         self._bg(p, rect, e)
         prog = resolve_program(frame.state, e.source)
-        text = expand_tokens(e.text, frame.state, prog)
+        text = expand_tokens(e.text, frame.state, prog, frame.millumin)
         if frame.state is None and "{" in e.text:
-            text = expand_tokens(e.text, None, None).replace("PROGRAM -", "PROGRAM")
+            text = expand_tokens(e.text, None, None, frame.millumin).replace("PROGRAM -", "PROGRAM")
         self._text(p, rect, text, e, self.qcolor(e.color), digits=False)
 
     def _draw_message(self, p, rect, e, layout, frame, blink_on, slow_on, editing):
@@ -392,6 +452,29 @@ class Renderer:
         self._text(p, rect, text, e, self.qcolor(e.color), digits=False)
 
 
+def progress_fraction(prog, count_down: bool, mode: str = "auto") -> float:
+    """0-1 length of the progress bar. 'remaining' empties, 'elapsed' fills;
+    'auto' follows the Limitimer: remaining when counting down, elapsed when up."""
+    if prog.total <= 0:
+        return 0.0
+    if mode == "auto":
+        mode = "remaining" if count_down else "elapsed"
+    value = prog.remaining if mode == "remaining" else prog.elapsed
+    return max(0.0, min(1.0, value / prog.total))
+
+
+def progress_rect(rect: QRectF, frac: float, direction: str = "ltr") -> QRectF:
+    """The filled part of a bar growing from one edge: ltr, rtl, btt or ttb."""
+    w, h = rect.width(), rect.height()
+    if direction == "rtl":
+        return QRectF(rect.right() - w * frac, rect.top(), w * frac, h)
+    if direction == "btt":
+        return QRectF(rect.left(), rect.bottom() - h * frac, w, h * frac)
+    if direction == "ttb":
+        return QRectF(rect.left(), rect.top(), w, h * frac)
+    return QRectF(rect.left(), rect.top(), w * frac, h)
+
+
 def checkerboard(p: QPainter, rect: QRectF, cell: int = 12) -> None:
     """Show transparency in the preview."""
     p.save()
@@ -408,4 +491,4 @@ def checkerboard(p: QPainter, rect: QRectF, cell: int = 12) -> None:
     p.restore()
 
 
-__all__ = ["CueState", "Frame", "Renderer", "checkerboard"]
+__all__ = ["CueState", "Frame", "Renderer", "checkerboard", "progress_fraction", "progress_rect"]

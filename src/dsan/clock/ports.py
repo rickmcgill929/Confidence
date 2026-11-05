@@ -34,6 +34,13 @@ class PortInfo:
     def is_usb(self) -> bool:
         return self.vid is not None
 
+    def short_label(self) -> str:
+        """For dropdowns: 'FT232R USB UART — cu.usbserial-A10K1 · SN A10K1'."""
+        name = self.device.rsplit("/", 1)[-1]
+        desc = self.description if self.description and self.description not in ("n/a", name) else ""
+        sn = f" · SN {self.serial_number}" if self.serial_number and self.serial_number not in name else ""
+        return f"{desc} — {name}{sn}" if desc else f"{name}{sn}"
+
     def label(self) -> str:
         extra = f"  [SN {self.serial_number}]" if self.serial_number else ""
         desc = f" — {self.description}" if self.description and self.description != "n/a" else ""
@@ -260,7 +267,7 @@ def detect(ports: Optional[List[PortInfo]] = None, *, pc_baud: int = 19200,
             out.perfectcue = by_dev[hit[0]]
         else:
             out.notes.append(f"No Perfect Cue button press seen on {', '.join(p.device for p in rest)} "
-                             f"at {pc_baud} baud. Pick the Perfect Cue port by hand, or try another baud.")
+                             f"at {pc_baud} baud. Pick the Perfect Cue port by hand, or check its wiring.")
     elif out.limitimer:
         out.notes.append("Only one USB adapter found; plug in the second one for the Perfect Cue.")
     return out

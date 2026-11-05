@@ -1,12 +1,21 @@
-"""DSAN Perfect Cue protocol: button events in, ASCII commands out. Pure Python, no I/O.
+"""DSAN Perfect Cue protocol: button events in, LED feedback and ASCII commands out.
+Pure Python, no I/O.
 
-Button presses arrive as single bytes (matches the Go reference)::
+The data link is 19200-8-N-1. Button presses arrive as single bytes::
 
     0x0F NEXT (green ▷)   0x1F PREV (red ◁)   0x2F BLANK, LED off   0x3F BLANK, LED on
 
 Any other byte is ignored.
 
-The receiver's ASCII command interface (RS-232, 9600-8-N-1)::
+Sending to a Perfect Cue in master mode lights its LEDs (see :class:`Led`)::
+
+    Enter          green right arrow
+    any arrow key  red left arrow
+    R T Y U        blink yellow, then leave it on
+    E A D          blink yellow, then leave it off
+    anything else  blink yellow for a while (error report)
+
+The receiver's separate ASCII command interface (RS-232, 9600-8-N-1)::
 
     '>' COMMAND ' ' CHK_HI CHK_LO '\\r'
 
@@ -18,7 +27,8 @@ from __future__ import annotations
 from enum import Enum, IntEnum
 from typing import Iterable, List
 
-BAUDRATE = 9600
+BAUDRATE = 19200            # Perfect Cue data link: button bytes in, LED bytes out
+RECEIVER_BAUDRATE = 9600    # the receiver's RS-232 ASCII command interface (Command)
 
 
 class Button(IntEnum):
@@ -34,6 +44,33 @@ _BUTTON_BYTES = frozenset(b.value for b in Button)
 def decode_buttons(data: Iterable[int]) -> List[Button]:
     """Extract button presses from a chunk of received bytes."""
     return [Button(b) for b in data if b in _BUTTON_BYTES]
+
+
+class Led(Enum):
+    """Bytes that light a Perfect Cue's LEDs in master mode. Value is the byte string to send."""
+    NEXT = b"\r"           # Enter → green right arrow
+    PREV = b"\x1b[D"       # an arrow key (left, as a terminal sends it) → red left arrow
+    BLANK_ON = b"R"        # blink yellow, leave on   (T, Y, U do the same)
+    BLANK_OFF = b"E"       # blink yellow, leave off  (A, D do the same)
+    ERROR = b"?"           # any other byte → yellow blinks for a while
+
+    @classmethod
+    def for_button(cls, button: "Button") -> "Led":
+        """The LED feedback that mirrors a button press (e.g. echo a press back to the presenter)."""
+        return {Button.NEXT: cls.NEXT, Button.PREV: cls.PREV,
+                Button.BLANK_ON: cls.BLANK_ON, Button.BLANK_OFF: cls.BLANK_OFF}[button]
+
+    @classmethod
+    def parse(cls, name: str) -> "Led":
+        """Accept 'next', 'prev', 'previous', 'blank_on', 'blank-off', 'error' (case-insensitive)."""
+        key = name.strip().upper().replace("-", "_")
+        key = {"PREVIOUS": "PREV", "FORWARD": "NEXT", "REVERSE": "PREV",
+               "BLANKON": "BLANK_ON", "BLANKOFF": "BLANK_OFF"}.get(key, key)
+        try:
+            return cls[key]
+        except KeyError:
+            raise ValueError(f"unknown Perfect Cue LED {name!r}; "
+                             f"expected one of {[c.name.lower() for c in cls]}") from None
 
 
 def command(text: str) -> bytes:
@@ -64,4 +101,4 @@ class Command(Enum):
                              f"expected one of {[c.name.lower() for c in cls]}") from None
 
 
-__all__ = ["BAUDRATE", "Button", "Command", "command", "decode_buttons"]
+__all__ = ["BAUDRATE", "RECEIVER_BAUDRATE", "Button", "Command", "Led", "command", "decode_buttons"]

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dsan"
-version = "0.2.0"
+dynamic = ["version"]
 description = "Read DSAN Limitimer stage timers and drive Perfect Cue presentation remotes — Python library, HTTP/WebSocket API and OSC bridge"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -33,7 +33,11 @@ dsan = "dsan.cli:main"
 
 [project.gui-scripts]
 dsan-viewer = "dsan.viewer:main"
-dsan-clock = "dsan.clock.app:main"
+confidence = "dsan.clock.app:main"
+dsan-clock = "dsan.clock.app:main"      # old name, kept as an alias
+
+[tool.setuptools.dynamic]
+version = { attr = "dsan.__version__" }
 
 [tool.setuptools.packages.find]
 where = ["src"]

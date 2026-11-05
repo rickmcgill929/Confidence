@@ -354,6 +354,65 @@ def parse_status(payload: bytes) -> Optional[LimitimerState]:
     )
 
 
+def _mmss(secs: int) -> str:
+    h, rem = divmod(secs, 3600)
+    m, s = divmod(rem, 60)
+    return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
+
+
+def annotate_status(payload: bytes) -> List[Tuple[str, str, str, str]]:
+    """Byte-by-byte breakdown of a status payload for debugging.
+
+    Returns rows of (offset, hex, field, meaning), e.g.
+    ``("07-09", "00 02 2C", "P1 total", "300 s (5:00)")``.
+    """
+    rows: List[Tuple[str, str, str, str]] = []
+    d = payload
+
+    def hx(a: int, b: int) -> str:
+        return " ".join(f"{x:02X}" for x in d[a:b])
+
+    def on(bit: bool) -> str:
+        return "on" if bit else "off"
+
+    if not d:
+        return rows
+    rows.append(("00", hx(0, 1), "type", {STATUS_MSG: "status", PING_MSG: "ping"}.get(d[0], f"unknown 0x{d[0]:02X}")))
+    if d[0] != STATUS_MSG or len(d) < 5:
+        return rows
+    hi, lo = d[1], d[2]
+    beep = BeepType(((lo & 0x40) >> 6) | ((hi & 0x01) << 1)).name.title()
+    rows.append(("01", hx(1, 2), "config high",
+                 f"permit changes {on(hi & 0x20)} (DIP 9) · beep bit 1 {on(hi & 1)} (DIP 8)"))
+    rows.append(("02", hx(2, 3), "config low",
+                 f"beep bit 0 {on(lo & 0x40)} (DIP 7) → {beep} · loud {on(lo & 0x20)} (DIP 6) · "
+                 f"continue {on(lo & 0x10)} (DIP 5) · countdown {on(lo & 0x08)} (DIP 4) · "
+                 f"P1-3 MM:SS {on(lo & 0x04)} (DIP 3) · P4 MM:SS {on(lo & 0x02)} (DIP 2)"
+                 + (f" · unknown bits 0x{lo & 0x81:02X}" if lo & 0x81 else "")))
+    rows.append(("03", hx(3, 4), "sequence", str(d[3])))
+    rows.append(("04", hx(4, 5), "selected", f"program {(d[4] & 3) + 1}"))
+    for i in range(4):
+        o = 5 + i * 11
+        if o + 10 >= len(d):
+            break
+        f = d[o]
+        flags = [n for bit, n in ((1, "running"), (2, "blink"), (4, "beep"), (8, "sec-adjust")) if f & bit]
+        if f & 0xF0:
+            flags.append(f"unknown 0x{f & 0xF0:02X}")
+        p = f"P{i + 1}"
+        rows.append((f"{o:02d}", hx(o, o + 1), f"{p} flags", ", ".join(flags) or "—"))
+        rows.append((f"{o + 1:02d}", hx(o + 1, o + 2), f"{p} reserved", ""))
+        for name, off in (("total", 2), ("sum-up", 5), ("elapsed", 8)):
+            v = _t7(d, o + off)
+            rows.append((f"{o + off:02d}-{o + off + 2:02d}", hx(o + off, o + off + 3), f"{p} {name}",
+                         f"{v} s ({_mmss(v)})"))
+    if len(d) > 49:
+        rows.append(("49", hx(49, 50), "reserved", ""))
+    if len(d) > 50:
+        rows.append((f"50-{len(d) - 1}", hx(50, len(d)), "extra", f"{len(d) - 50} unexpected byte(s)"))
+    return rows
+
+
 def _e7(v: int) -> List[int]:
     if not 0 <= v < 1 << 21:
         raise ValueError("time out of range")
@@ -383,5 +442,5 @@ def encode_ping() -> bytes:
 __all__ = [
     "BAUDRATE", "BeepType", "Decoder", "LimitimerState", "PacketEvent", "Program",
     "PING_MSG", "STATUS_MSG", "crc16_modbus", "encode_ping", "encode_status", "frame",
-    "parse_status",
+    "annotate_status", "parse_status",
 ]

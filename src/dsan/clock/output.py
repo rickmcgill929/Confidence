@@ -21,13 +21,19 @@ from .render import Frame, Renderer
 MODES = {"window": "Window", "fullscreen": "Full screen", "overlay": "Overlay (over slides)"}
 
 
-def _mac_float_over_fullscreen(widget: QWidget) -> bool:
-    """macOS: keep the overlay above other apps' full-screen slideshows.
+_CAN_JOIN_ALL_SPACES, _STATIONARY, _IGNORES_CYCLE, _FULLSCREEN_NONE, _FULLSCREEN_AUX = (
+    1 << 0, 1 << 4, 1 << 6, 1 << 9, 1 << 8)
 
-    Qt's stay-on-top uses the floating window level, which doesn't reach into
-    another app's full-screen Space. With pyobjc installed we raise the window
-    level and let it join every Space as a full-screen auxiliary window.
-    Returns True if it was applied.
+
+def _mac_window(widget: QWidget, *, level: int, click_through: bool) -> bool:
+    """macOS window tweaks Qt can't express (needs pyobjc). Returns True if applied.
+
+    * level 25 (status bar) puts a full-screen output above that display's menu
+      bar and Dock without using macOS's own full screen, which takes a Space and
+      blacks out the other display when displays share Spaces.
+    * level 1000 (screen saver) lets the overlay float over full-screen slideshows.
+    * Full-screen-auxiliary + all Spaces keeps the output up when Keynote or
+      PowerPoint goes full screen on the laptop. Never hide when the app loses focus.
     """
     if sys.platform != "darwin":
         return False
@@ -37,14 +43,17 @@ def _mac_float_over_fullscreen(widget: QWidget) -> bool:
         win = view.window()
         if win is None:
             return False
-        CAN_JOIN_ALL_SPACES, STATIONARY, IGNORES_CYCLE, FULLSCREEN_AUX = 1 << 0, 1 << 4, 1 << 6, 1 << 8
-        win.setLevel_(1000)  # NSScreenSaverWindowLevel
-        win.setCollectionBehavior_(CAN_JOIN_ALL_SPACES | STATIONARY | IGNORES_CYCLE | FULLSCREEN_AUX)
+        win.setLevel_(level)
+        win.setCollectionBehavior_(_CAN_JOIN_ALL_SPACES | _STATIONARY | _IGNORES_CYCLE | _FULLSCREEN_AUX)
         win.setHidesOnDeactivate_(False)
-        win.setIgnoresMouseEvents_(True)
+        win.setIgnoresMouseEvents_(click_through)
         return True
     except Exception:
         return False
+
+
+def _mac_float_over_fullscreen(widget: QWidget) -> bool:
+    return _mac_window(widget, level=1000, click_through=True)
 
 
 class OutputWindow(QWidget):
@@ -59,7 +68,7 @@ class OutputWindow(QWidget):
         self.mode = "window"
         self.screen_name: Optional[str] = None
         self.mac_float_applied = False
-        self.setWindowTitle("DSAN Clock — Output")
+        self.setWindowTitle("Confidence — Output")
         self.resize(960, 540)
         self.setStyleSheet("background: black;")
         self._timer = QTimer(self)
@@ -79,40 +88,59 @@ class OutputWindow(QWidget):
         return QGuiApplication.primaryScreen()
 
     def apply(self, mode: str, screen_name: Optional[str]) -> None:
-        """(Re)show the output in a mode on a screen."""
+        """(Re)show the output in a mode on a screen.
+
+        "Full screen" is a borderless window covering exactly the chosen display,
+        not the OS's own full-screen mode. macOS full screen moves the window into
+        its own Space (and with "Displays have separate Spaces" off, blanks every
+        other display); Windows' can jump to the wrong monitor. A screen-sized
+        borderless window does neither and leaves the laptop display alone.
+        """
         self.mode = mode if mode in MODES else "window"
         self.screen_name = screen_name
         was_visible = self.isVisible()
         self.hide()
-        flags = Qt.WindowType.Window
+        self.setWindowState(Qt.WindowState.WindowNoState)
         overlay = self.mode == "overlay"
+        full = self.mode == "fullscreen"
+        flags = Qt.WindowType.Window
         if overlay:
             flags = (Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint
                      | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.Tool
                      | Qt.WindowType.WindowTransparentForInput
                      | Qt.WindowType.WindowDoesNotAcceptFocus)
-        elif self.mode == "fullscreen":
-            flags = Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint
+        elif full:
+            flags = (Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint
+                     | Qt.WindowType.WindowStaysOnTopHint)
+            if sys.platform == "darwin":
+                flags |= Qt.WindowType.NoDropShadowWindowHint
         self.setWindowFlags(flags)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, overlay)
         self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, overlay)
-        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, overlay)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, overlay or full)
         self.setStyleSheet("" if overlay else "background: black;")
-        geo = self._target_screen().geometry()
+        self.setCursor(Qt.CursorShape.BlankCursor if full else Qt.CursorShape.ArrowCursor)
+        screen = self._target_screen()
+        geo = screen.geometry()
         if self.mode == "window":
             if not was_visible or self.width() >= geo.width():
                 self.resize(960, 540)
                 self.move(geo.center().x() - 480, geo.center().y() - 270)
             self.showNormal()
+            self.mac_float_applied = False
         else:
+            self.setScreen(screen)
             self.setGeometry(geo)
-            if self.mode == "fullscreen":
-                self.showFullScreen()
-            else:
-                self.show()
-            if overlay:
-                self.mac_float_applied = _mac_float_over_fullscreen(self)
+            self.show()
+            self.setGeometry(geo)          # some window managers adjust the first placement
+            level = 1000 if overlay else 25
+            self.mac_float_applied = _mac_window(self, level=level, click_through=overlay)
         self.raise_()
+
+    def on_screen(self) -> Optional[str]:
+        """Name of the display the output is actually on."""
+        s = self.screen()
+        return s.name() if s else None
 
     # -- painting ----------------------------------------------------------------
 
@@ -125,7 +153,8 @@ class OutputWindow(QWidget):
             p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
         else:
             p.fillRect(rect, Qt.GlobalColor.black)
-        self.renderer.paint(p, rect, self._layout(), self._frame())
+        # px_scale: frame widths etc. are in device pixels of the display
+        self.renderer.paint(p, rect, self._layout(), self._frame(), px_scale=1.0 / self.devicePixelRatioF())
         p.end()
 
     def keyPressEvent(self, e: QKeyEvent):

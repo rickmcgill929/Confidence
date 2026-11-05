@@ -1,7 +1,8 @@
-"""DSAN Clock — a video clock for a Limitimer and a Perfect Cue on two USB-RS485 adapters.
+"""Confidence — show timing on screen and SDI: a DSAN Limitimer and Perfect Cue over USB-RS485,
+Millumin playback over OSC, and OSC control.
 
     pip install 'dsan[clock]'
-    dsan-clock
+    confidence
 
 The control window holds the inputs, the output settings, the operator message
 and the layout editor. The output window draws the layout full screen, in a
@@ -12,36 +13,44 @@ from __future__ import annotations
 import datetime as _dt
 import json
 import os
+import re
 import sys
 import threading
 import time
-from typing import Callable, Dict, List, Optional
+from typing import Dict, List, Optional
 
-from PyQt6.QtCore import QObject, QRectF, QSettings, QSize, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QAction, QColor, QFontDatabase, QGuiApplication, QKeyEvent, QPainter
+from PyQt6.QtCore import QObject, QSettings, QSize, Qt, QTimer, pyqtSignal
+from PyQt6.QtGui import QAction, QColor, QFontDatabase, QGuiApplication, QKeySequence
 from PyQt6.QtWidgets import (
-    QApplication, QCheckBox, QColorDialog, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout,
+    QApplication, QCheckBox, QColorDialog, QComboBox, QDoubleSpinBox, QFormLayout, QGridLayout,
     QGroupBox, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMainWindow,
-    QMenu, QMessageBox, QPushButton, QScrollArea, QSizePolicy, QSplitter, QVBoxLayout, QWidget,
+    QMenu, QMessageBox, QPushButton, QScrollArea, QSpinBox, QSplitter, QToolButton, QVBoxLayout, QWidget,
 )
 
 from .. import __version__
+from .. import version as ver
 from .. import perfectcue as pc
 from ..devices import Limitimer, LinkState, PerfectCue
 from ..limitimer import LimitimerState
 from . import ports as portsmod
 from .layout import (COMMON_FIELDS, ELEMENT_TYPES, PRESETS, SOURCES, TYPE_FIELDS,
                      Element, Layout, default_element, format_color, parse_color)
+from . import align as al
+from . import files
+from .widgets import Combo
+from .debug import DebugTap, DebugWindow
+from .decklink_panel import DeckLinkPanel
+from .editor import EditorCanvas, History, make_icon
 from .output import MODES, OutputWindow
-from .render import CueState, Frame, Renderer, checkerboard
+from .render import CueState, Frame, Renderer
 
 try:
-    from ..osc import OscBridge
+    from ..osc import OscBridge, OscListener
     OSC_AVAILABLE = True
 except ImportError:  # pragma: no cover
     OSC_AVAILABLE = False
 
-PC_BAUDS = (19200, 9600, 38400, 57600, 115200)
+BAUD = 19200           # Limitimer and Perfect Cue data links are both fixed at 19200 8N1
 TEAL = "#2EC4B6"
 
 _STYLE = """
@@ -54,12 +63,17 @@ QPushButton:hover { background: #303030; border-color: #555; }
 QPushButton:pressed { background: #1C1C1C; }
 QPushButton:checked { background: #1F3D3A; border-color: #2EC4B6; color: #E6FFFB; }
 QPushButton:disabled { color: #4A4A4A; border-color: #2A2A2A; }
+QPushButton::menu-indicator { image: none; width: 0; }
 QComboBox, QLineEdit, QDoubleSpinBox { background: #202020; border: 1px solid #343434; border-radius: 4px;
                                        padding: 4px 6px; }
 QComboBox QAbstractItemView { background: #202020; selection-background-color: #1F3D3A; }
 QListWidget { background: #1B1B1B; border: 1px solid #2C2C2C; border-radius: 4px; }
 QListWidget::item:selected { background: #1F3D3A; color: #E6FFFB; }
 QScrollArea { border: none; }
+QToolButton { background: transparent; border: 1px solid transparent; border-radius: 4px; padding: 3px; }
+QToolButton:hover { background: #262626; border-color: #3A3A3A; }
+QToolButton:checked { background: #1F3D3A; border-color: #2EC4B6; }
+QToolButton:disabled { opacity: 0.4; }
 QLabel#dim { color: #6A6A6A; }
 QStatusBar { background: #101010; color: #707070; }
 QMenuBar { background: #101010; } QMenu { background: #1E1E1E; }
@@ -78,6 +92,27 @@ _LINK_TEXT = {
 
 # ── thread bridge ───────────────────────────────────────────────────────────────
 
+SETTINGS_APP = "Confidence"
+OLD_SETTINGS_APPS = ("TruTime", "DSANClock")   # earlier names: TruTime, DSAN Viewer / DSAN Clock
+
+
+def open_settings(factory=QSettings):
+    """Confidence's settings. On first launch, copy over what an earlier version (TruTime,
+    DSAN Viewer) had saved."""
+    s = factory("TRUCUE", SETTINGS_APP)
+    if not s.allKeys():
+        for name in OLD_SETTINGS_APPS:
+            old = factory("TRUCUE", name)
+            keys = old.allKeys()
+            if keys:
+                for k in keys:
+                    s.setValue(k, old.value(k))
+                s.setValue("settings/migrated_from", name)
+                s.sync()
+                break
+    return s
+
+
 class Signals(QObject):
     """Device callbacks arrive on reader threads; Qt queues these onto the GUI thread."""
     lt_state = pyqtSignal(object)
@@ -87,6 +122,9 @@ class Signals(QObject):
     error = pyqtSignal(str)
     detect_status = pyqtSignal(str)
     detect_done = pyqtSignal(object)
+    osc_press = pyqtSignal(object)
+    mm_message = pyqtSignal(str, object, bool)
+    osc_message = pyqtSignal(str, object, str)
 
 
 # ── small widgets ───────────────────────────────────────────────────────────────
@@ -132,149 +170,33 @@ def _pct_spin(value: float) -> QDoubleSpinBox:
     return s
 
 
-# ── preview / editor canvas ─────────────────────────────────────────────────────
-
-class Preview(QWidget):
-    """Live preview of the output that doubles as the layout editor.
-
-    Click to select, drag to move, drag the corner handle to resize,
-    arrow keys nudge (Shift = 10×), Delete removes.
-    """
-    selected = pyqtSignal(str)
-    edited = pyqtSignal()
-    delete_requested = pyqtSignal()
-
-    SNAP = 0.005
-
-    def __init__(self, layout_source: Callable[[], Layout], frame_source: Callable[[], Frame],
-                 aspect_source: Callable[[], float], renderer: Renderer):
-        super().__init__()
-        self._layout = layout_source
-        self._frame = frame_source
-        self._aspect = aspect_source
-        self.renderer = renderer
-        self.selected_id: Optional[str] = None
-        self._drag = None
-        self.setMinimumSize(QSize(420, 240))
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-        self.setMouseTracking(True)
-        t = QTimer(self)
-        t.timeout.connect(self.update)
-        t.start(50)
-
-    def canvas(self) -> QRectF:
-        a = self._aspect() or 16 / 9
-        w, h = self.width() - 8, self.height() - 8
-        if w / h > a:
-            cw, ch = h * a, h
-        else:
-            cw, ch = w, w / a
-        return QRectF((self.width() - cw) / 2, (self.height() - ch) / 2, cw, ch)
-
-    def paintEvent(self, e):
-        p = QPainter(self)
-        p.fillRect(self.rect(), QColor("#111111"))
-        c = self.canvas()
-        lay = self._layout()
-        if self.renderer.qcolor(lay.background).alpha() < 255:
-            checkerboard(p, c)
-        self.renderer.paint(p, c, lay, self._frame(), editing=True, selected=self.selected_id)
-        p.setPen(QColor("#333"))
-        p.setBrush(Qt.BrushStyle.NoBrush)
-        p.drawRect(c)
-        p.end()
-
-    def _norm(self, pos) -> tuple:
-        c = self.canvas()
-        return (pos.x() - c.left()) / c.width(), (pos.y() - c.top()) / c.height()
-
-    def _snap(self, v: float) -> float:
-        return round(v / self.SNAP) * self.SNAP
-
-    def mousePressEvent(self, ev):
-        self.setFocus()
-        fx, fy = self._norm(ev.position())
-        lay = self._layout()
-        cur = lay.find(self.selected_id) if self.selected_id else None
-        c = self.canvas()
-        if cur is not None:
-            hx = c.left() + (cur.x + cur.w) * c.width()
-            hy = c.top() + (cur.y + cur.h) * c.height()
-            if abs(ev.position().x() - hx) < 12 and abs(ev.position().y() - hy) < 12:
-                self._drag = ("resize", cur, fx, fy, cur.x, cur.y, cur.w, cur.h)
-                return
-        hit = lay.hit(fx, fy)
-        self.selected_id = hit.id if hit else None
-        self.selected.emit(self.selected_id or "")
-        if hit:
-            self._drag = ("move", hit, fx, fy, hit.x, hit.y, hit.w, hit.h)
-
-    def mouseMoveEvent(self, ev):
-        c = self.canvas()
-        lay = self._layout()
-        cur = lay.find(self.selected_id) if self.selected_id else None
-        if self._drag is None:
-            near = False
-            if cur is not None:
-                hx = c.left() + (cur.x + cur.w) * c.width()
-                hy = c.top() + (cur.y + cur.h) * c.height()
-                near = abs(ev.position().x() - hx) < 12 and abs(ev.position().y() - hy) < 12
-            self.setCursor(Qt.CursorShape.SizeFDiagCursor if near else Qt.CursorShape.ArrowCursor)
-            return
-        kind, el, sx, sy, ox, oy, ow, oh = self._drag
-        fx, fy = self._norm(ev.position())
-        dx, dy = fx - sx, fy - sy
-        if kind == "move":
-            el.x = self._snap(min(max(ox + dx, 0.0), 1.0 - el.w))
-            el.y = self._snap(min(max(oy + dy, 0.0), 1.0 - el.h))
-        else:
-            el.w = self._snap(min(max(ow + dx, 0.01), 1.0 - el.x))
-            el.h = self._snap(min(max(oh + dy, 0.01), 1.0 - el.y))
-        self.edited.emit()
-
-    def mouseReleaseEvent(self, ev):
-        self._drag = None
-
-    def keyPressEvent(self, ev: QKeyEvent):
-        lay = self._layout()
-        el = lay.find(self.selected_id) if self.selected_id else None
-        if el is None:
-            return super().keyPressEvent(ev)
-        step = 0.05 if ev.modifiers() & Qt.KeyboardModifier.ShiftModifier else self.SNAP
-        k = ev.key()
-        if k in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
-            self.delete_requested.emit()
-            return
-        moves = {Qt.Key.Key_Left: (-step, 0), Qt.Key.Key_Right: (step, 0),
-                 Qt.Key.Key_Up: (0, -step), Qt.Key.Key_Down: (0, step)}
-        if k in moves:
-            dx, dy = moves[k]
-            el.x = round(min(max(el.x + dx, 0.0), 1.0 - el.w), 4)
-            el.y = round(min(max(el.y + dy, 0.0), 1.0 - el.h), 4)
-            self.edited.emit()
-            return
-        super().keyPressEvent(ev)
-
-
 # ── properties editor ───────────────────────────────────────────────────────────
 
 _FIELD_LABELS = {
     "name": "Name", "visible": "Visible", "x": "Left", "y": "Top", "w": "Width", "h": "Height",
     "bg": "Background", "radius": "Corner radius", "color": "Colour", "font": "Font", "bold": "Bold",
-    "align": "Align", "source": "Program", "overtime": "Count past zero (+00:20)",
+    "align": "Align", "source": "Source", "mm_show": "Millumin shows", "overtime": "Count past zero (+00:20)",
     "follow_format": "Follow DIP 2/3 format", "phase_colors": "Colour by phase",
+    "follow_blink": "Flash with Limitimer blink",
     "orientation": "Orientation", "show_idle": "Green while stopped",
-    "cue_style": "Style", "hold": "Hold NEXT/PREV (s)", "clock_24h": "24-hour",
+    "cue_style": "Style", "hold": "Hold NEXT/PREV (s)",
+    "bar_direction": "Direction", "bar_fill": "Shows", "frame_px": "Frame width", "clock_24h": "24-hour",
     "clock_seconds": "Show seconds", "text": "Text", "flash": "Flash",
 }
 _CHOICES = {
     "align": [("left", "Left"), ("center", "Centre"), ("right", "Right")],
-    "source": [("selected", "Selected on Limitimer")] + [(n, f"Program {n}") for n in SOURCES[1:]],
+    "source": [("selected", "Selected on Limitimer")] + [(n, f"Program {n}") for n in SOURCES[1:5]]
+              + [("millumin", "Millumin")],
+    "mm_show": [("remaining", "Remaining (countdown)"), ("elapsed", "Elapsed"), ("duration", "Duration (TRT)")],
     "orientation": [("horizontal", "Horizontal"), ("vertical", "Vertical")],
-    "cue_style": [("arrows", "Arrows ◁ ● ▷"), ("light", "Full colour light"), ("text", "Text")],
+    "cue_style": [("arrows", "Arrows ◁ ● ▷"), ("light", "Full colour light"), ("frame", "Outline frame"),
+                  ("text", "Text")],
+    "bar_direction": [("ltr", "Left → right"), ("rtl", "Right → left"),
+                      ("btt", "Bottom → top"), ("ttb", "Top → bottom")],
+    "bar_fill": [("auto", "Auto (remaining on countdown, elapsed on count-up)"),
+                 ("remaining", "Time remaining (empties)"), ("elapsed", "Time elapsed (fills)")],
 }
-_BOOLS = {"visible", "bold", "overtime", "follow_format", "phase_colors", "show_idle", "clock_24h",
+_BOOLS = {"visible", "bold", "overtime", "follow_format", "phase_colors", "follow_blink", "show_idle", "clock_24h",
           "clock_seconds", "flash"}
 _COLOR_FIELDS = {"bg", "color"}
 _GEOM = {"x", "y", "w", "h"}
@@ -297,6 +219,24 @@ class PropertyEditor(QWidget):
             self._form.removeRow(0)
         self._geom = {}
 
+    def show_multi(self, els: List[Element], px: Optional[tuple] = None):
+        self.clear()
+        self.element = None
+        title = QLabel(f"{len(els)} elements selected")
+        title.setStyleSheet(f"color: {TEAL}; font-weight: 600;")
+        self._form.addRow(title)
+        x, y, w, h = al.bounds(els)
+        text = f"x {x * 100:.1f}%  y {y * 100:.1f}%   {w * 100:.1f} × {h * 100:.1f}%"
+        if px:
+            text += f"\n{round(x * px[0])}, {round(y * px[1])}   {round(w * px[0])} × {round(h * px[1])} px"
+        bounds = QLabel(text)
+        self._form.addRow("Group", bounds)
+        hint = QLabel("Align, distribute and match sizes with the toolbar above the preview. "
+                      "Drag to move them together; ⌘-click or Shift-click to add or remove.")
+        hint.setWordWrap(True)
+        hint.setObjectName("dim")
+        self._form.addRow(hint)
+
     def show_element(self, e: Optional[Element]):
         self.clear()
         self.element = e
@@ -308,7 +248,9 @@ class PropertyEditor(QWidget):
         for f in COMMON_FIELDS + TYPE_FIELDS[e.type]:
             self._form.addRow(_FIELD_LABELS.get(f, f), self._widget_for(e, f))
         if e.type == "label":
-            hint = QLabel("Tokens: {program}  {n}  {mode}")
+            hint = QLabel("Limitimer: {program}  {n}  {mode}\nMillumin: {clip}  {layer}  {column}  {trt}  "
+                          "{remaining}  {elapsed}  {state}  {playmode}")
+            hint.setWordWrap(True)
             hint.setObjectName("dim")
             self._form.addRow("", hint)
         if e.type == "message":
@@ -345,14 +287,14 @@ class PropertyEditor(QWidget):
             w.changed.connect(lambda val, f=f: self._set(e, f, val))
             return w
         if f in _CHOICES:
-            w = QComboBox()
+            w = Combo()
             for key, label in _CHOICES[f]:
                 w.addItem(label, key)
             w.setCurrentIndex(max(0, w.findData(v)))
             w.currentIndexChanged.connect(lambda _i, w=w, f=f: self._set(e, f, w.currentData()))
             return w
         if f == "font":
-            w = QComboBox()
+            w = Combo()
             w.addItem("Default (clean sans)", "")
             for fam in self._families:
                 w.addItem(fam, fam)
@@ -362,6 +304,14 @@ class PropertyEditor(QWidget):
                 i = w.count() - 1
             w.setCurrentIndex(i)
             w.currentIndexChanged.connect(lambda _i, w=w: self._set(e, "font", w.currentData()))
+            return w
+        if f == "frame_px":
+            w = QSpinBox()
+            w.setRange(1, 400)
+            w.setSuffix(" px")
+            w.setValue(int(v))
+            w.setToolTip("Outline width in pixels of the output (screen, window or DeckLink SDI)")
+            w.valueChanged.connect(lambda val: self._set(e, "frame_px", int(val)))
             return w
         if f in ("radius", "hold"):
             w = QDoubleSpinBox()
@@ -409,7 +359,7 @@ class LayoutEditor(QWidget):
         bg.setToolTip("Set alpha to 0 for a transparent overlay")
         bg.changed.connect(lambda v: (setattr(lay, "background", v), self.changed.emit()))
         self._form.addRow("Background", bg)
-        ns = QComboBox()
+        ns = Combo()
         for key, label in (("dim", "Dim digits + NO SIGNAL"), ("text", "Show NO SIGNAL"),
                            ("hide", "Hide timers"), ("ignore", "Keep showing last time")):
             ns.addItem(label, key)
@@ -433,7 +383,7 @@ class LayoutEditor(QWidget):
         self._form.addRow("", hint)
 
     def _add_font(self, lay: Layout):
-        path, _ = QFileDialog.getOpenFileName(self, "Add font", "", "Fonts (*.ttf *.otf)")
+        path = files.open_path(self, "Add font", "Fonts (*.ttf *.otf)", "fonts")
         if path and path not in lay.font_files:
             lay.font_files.append(path)
             self.fonts_changed.emit()
@@ -446,7 +396,7 @@ class LayoutEditor(QWidget):
 class ControlWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.settings = QSettings("TRUCUE", "DSANClock")
+        self.settings = open_settings(QSettings)
         self.renderer = Renderer()
         self.sig = Signals()
         self.sig.lt_state.connect(self._on_lt_state)
@@ -467,10 +417,22 @@ class ControlWindow(QMainWindow):
         self.perfectcue: Optional[PerfectCue] = None
         self.demo = False
         self.osc = None
+        self.osc_in = None
+        self.mm_rx = None
         self._detecting = False
         self._port_infos: Dict[str, portsmod.PortInfo] = {}
+        self.refs: Dict[str, Optional[portsmod.PortRef]] = {"lt": None, "pc": None}
+        self._wanted_screen: Optional[str] = None
+        self._watched_screens: set = set()
+        self.want: Dict[str, bool] = {"lt": False, "pc": False}   # operator pressed Connect
+        self.pc_raw_bytes = 0
+        self.pc_last_press: Optional[tuple] = None
 
         self.layout_obj: Layout = PRESETS["Confidence monitor"]()
+        self.history = History()
+        self.debug_tap = DebugTap()
+        self.debug_window: Optional[DebugWindow] = None
+        self._committed: Optional[dict] = None
         self.layout_path: Optional[str] = None
 
         self.output = OutputWindow(self.frame, lambda: self.layout_obj, self.renderer)
@@ -482,14 +444,88 @@ class ControlWindow(QMainWindow):
 
         self._build()
         self._load_settings()
-        QGuiApplication.instance().screenAdded.connect(lambda _s: self._refresh_screens())
-        QGuiApplication.instance().screenRemoved.connect(lambda _s: self._refresh_screens())
+        # Re-scan ports (hot-plug) every 2 s and refresh the activity lines every second.
+        self._ticks = 0
+        self._tick_timer = QTimer(self)
+        self._tick_timer.timeout.connect(self._tick)
+        self._tick_timer.start(1000)
+        QGuiApplication.instance().screenAdded.connect(lambda _s: self._screens_changed())
+        QGuiApplication.instance().screenRemoved.connect(lambda _s: QTimer.singleShot(0, self._screens_changed))
+
+    def _tick(self):
+        self._ticks += 1
+        self._update_millumin()
+        self.decklink_panel.update_status()
+        if self._ticks % 2 == 0 and not self._detecting:
+            self._refresh_ports()
+        else:
+            self._update_activity()
+
+    def about_box(self) -> QMessageBox:
+        box = QMessageBox(self)
+        box.setWindowTitle("About Confidence")
+        icon = QGuiApplication.instance().windowIcon()
+        if not icon.isNull():
+            box.setIconPixmap(icon.pixmap(64, 64))
+        b = ver.build()
+        build_line = (f"Build {b}" + (f" · {ver.commit()}" if ver.commit() else "")
+                      + (f" · built {ver.built_at()}" if ver.built_at() else "")) if b != "dev" \
+            else "Running from source (development)"
+        box.setText(f"<b>Confidence {__version__}</b><br>{build_line}")
+        rows = "".join(f"<tr><td style='color:#7A7A7A;padding-right:10px'>{k}</td><td>{v}</td></tr>"
+                       for k, v in ver.details().items() if k not in ("Confidence", "Build", "Commit", "Built"))
+        box.setInformativeText(f"<table>{rows}</table><br>Show timing for DSAN Limitimer, Perfect Cue and Millumin · TRUCUE")
+        box.copy_button = box.addButton("Copy details", QMessageBox.ButtonRole.ActionRole)
+        box.notes_button = box.addButton("What's new", QMessageBox.ButtonRole.HelpRole)
+        box.addButton(QMessageBox.StandardButton.Ok)
+        return box
+
+    def show_about(self):
+        box = self.about_box()
+        box.exec()
+        if box.clickedButton() is box.copy_button:
+            QGuiApplication.clipboard().setText(ver.details_text())
+        elif box.clickedButton() is box.notes_button:
+            self.show_whats_new()
+
+    def whats_new_dialog(self):
+        from PyQt6.QtWidgets import QDialog, QDialogButtonBox, QTextBrowser
+        dlg = QDialog(self)
+        dlg.setWindowTitle(f"What's new — Confidence {__version__}")
+        dlg.resize(640, 560)
+        v = QVBoxLayout(dlg)
+        view = QTextBrowser()
+        view.setOpenExternalLinks(True)
+        path = ver._changelog_path()
+        view.setMarkdown(path.read_text(encoding="utf-8") if path else
+                         f"# Confidence {__version__}\n\nThe changelog isn't included in this build.")
+        v.addWidget(view)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        buttons.rejected.connect(dlg.reject)
+        v.addWidget(buttons)
+        dlg.setStyleSheet(_STYLE)
+        return dlg
+
+    def show_whats_new(self):
+        self.whats_new_dialog().exec()
+
+    def show_debug(self):
+        if self.debug_window is None:
+            self.debug_window = DebugWindow(self.debug_tap, lambda: (self.limitimer, self.perfectcue),
+                                            self.settings)
+            self.debug_window.setStyleSheet(_STYLE)
+        self.debug_window.show()
+        self.debug_window.raise_()
+        self.debug_window.activateWindow()
 
     # ── data for painting ────────────────────────────────────────────────────────
 
     def frame(self) -> Frame:
+        now = time.monotonic()
+        mm = self.mm_rx.tracker.view(self.mm_layer_name(), now) if self.mm_rx else None
         return Frame(state=self.lt_state, link=self.lt_link, cue=self.cue, message=self.message,
-                     now=time.monotonic(), wall=_dt.datetime.now())
+                     millumin=mm, mm_yellow=self.mm_yellow.value(), mm_red=self.mm_red.value(),
+                     now=now, wall=_dt.datetime.now())
 
     def _aspect(self) -> float:
         g = self._selected_screen().geometry()
@@ -500,7 +536,11 @@ class ControlWindow(QMainWindow):
     # ── build UI ─────────────────────────────────────────────────────────────────
 
     def _build(self):
-        self.setWindowTitle(f"DSAN Clock {__version__}")
+        self.setWindowTitle(f"Confidence {__version__}")
+        self.version_label = QLabel(f"v{ver.version_string()}")
+        self.version_label.setObjectName("dim")
+        self.version_label.setToolTip("About Confidence… (Help menu)")
+        self.statusBar().addPermanentWidget(self.version_label)
         self.setStyleSheet(_STYLE)
         self.resize(1280, 820)
 
@@ -513,6 +553,52 @@ class ControlWindow(QMainWindow):
             a.triggered.connect(slot)
             file_menu.addAction(a)
 
+        help_menu = self.menuBar().addMenu("Help")
+        about = QAction("About Confidence", self)
+        about.setMenuRole(QAction.MenuRole.AboutRole)        # macOS: goes in the app menu
+        about.triggered.connect(self.show_about)
+        help_menu.addAction(about)
+        whats_new = QAction("What's new", self)
+        whats_new.triggered.connect(self.show_whats_new)
+        help_menu.addAction(whats_new)
+
+        devices_menu = self.menuBar().addMenu("Devices")
+        self.detect_action = QAction("Detect adapters", self)
+        self.detect_action.setToolTip("Listen on every USB adapter and work out which is which")
+        self.detect_action.triggered.connect(self._start_detect)
+        devices_menu.addAction(self.detect_action)
+        swap = QAction("Swap Limitimer and Perfect Cue adapters", self)
+        swap.triggered.connect(self._swap_ports)
+        devices_menu.addAction(swap)
+        devices_menu.addSeparator()
+        self.debug_action = QAction("Debug console", self)
+        self.debug_action.setShortcut("Ctrl+D")             # ⌘D on macOS
+        self.debug_action.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)  # also from the console itself
+        self.debug_action.triggered.connect(self.show_debug)
+        devices_menu.addAction(self.debug_action)
+
+        edit_menu = self.menuBar().addMenu("Edit")
+        self.undo_action = QAction("Undo", self)
+        self.undo_action.setShortcut(QKeySequence.StandardKey.Undo)
+        self.undo_action.triggered.connect(self._undo)
+        self.redo_action = QAction("Redo", self)
+        self.redo_action.setShortcut(QKeySequence.StandardKey.Redo)
+        self.redo_action.triggered.connect(self._redo)
+        edit_menu.addAction(self.undo_action)
+        edit_menu.addAction(self.redo_action)
+        edit_menu.addSeparator()
+        for text, slot, key in (("Duplicate", self._duplicate_element, "Ctrl+Shift+D"),
+                                ("Select all", lambda: self.preview.set_selection(
+                                    [e.id for e in self.layout_obj.elements if e.visible], emit=True), "Ctrl+A")):
+            a = QAction(text, self)
+            a.setShortcut(key)
+            a.triggered.connect(slot)
+            edit_menu.addAction(a)
+        align_menu = edit_menu.addMenu("Align")
+        for how, label in (("left", "Left edges"), ("hcenter", "Horizontal centres"), ("right", "Right edges"),
+                           ("top", "Top edges"), ("vcenter", "Vertical centres"), ("bottom", "Bottom edges")):
+            align_menu.addAction(label, lambda h=how: self._align(h))
+
         root = QSplitter()
         self.setCentralWidget(root)
 
@@ -521,9 +607,14 @@ class ControlWindow(QMainWindow):
         lv = QVBoxLayout(left)
         lv.setContentsMargins(8, 4, 8, 8)
         lv.addWidget(self._build_inputs())
+        lv.addWidget(self._build_dips())
         lv.addWidget(self._build_output())
+        self.decklink_panel = DeckLinkPanel(self.renderer, lambda: self.layout_obj, self.frame,
+                                            lambda m: self.statusBar().showMessage(m, 6000))
+        lv.addWidget(self.decklink_panel)
         lv.addWidget(self._build_message())
         lv.addWidget(self._build_osc())
+        lv.addWidget(self._build_millumin())
         lv.addStretch()
         scroll = QScrollArea()
         scroll.setWidget(left)
@@ -538,7 +629,7 @@ class ControlWindow(QMainWindow):
         rv.setContentsMargins(4, 8, 8, 8)
         bar = QHBoxLayout()
         bar.addWidget(QLabel("Preset:"))
-        self.preset_combo = QComboBox()
+        self.preset_combo = Combo()
         self.preset_combo.addItem("Load a preset…", None)
         for name in PRESETS:
             self.preset_combo.addItem(name, name)
@@ -554,10 +645,12 @@ class ControlWindow(QMainWindow):
         self.layout_label.setObjectName("dim")
         bar.addWidget(self.layout_label)
         rv.addLayout(bar)
+        rv.addLayout(self._build_align_bar())
 
         split = QSplitter(Qt.Orientation.Vertical)
-        self.preview = Preview(lambda: self.layout_obj, self.frame, self._aspect, self.renderer)
-        self.preview.selected.connect(self._select_element)
+        self.preview = EditorCanvas(lambda: self.layout_obj, self.frame, self._aspect, self.renderer,
+                                    self._output_pixels)
+        self.preview.selection_changed.connect(lambda _ids: self._show_selection())
         self.preview.edited.connect(self._geometry_edited)
         self.preview.delete_requested.connect(self._delete_element)
         split.addWidget(self.preview)
@@ -567,11 +660,14 @@ class ControlWindow(QMainWindow):
         bh.setContentsMargins(0, 0, 0, 0)
         listcol = QVBoxLayout()
         self.element_list = QListWidget()
-        self.element_list.currentRowChanged.connect(self._list_row_changed)
+        self.element_list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
+        self.element_list.itemSelectionChanged.connect(self._list_selection_changed)
         self.element_list.itemChanged.connect(self._list_item_changed)
         listcol.addWidget(self.element_list)
         btns = QHBoxLayout()
+        btns.setSpacing(4)
         add = QPushButton("Add ▾")
+        add.setToolTip("Add an element")
         menu = QMenu(add)
         for t, label in ELEMENT_TYPES.items():
             menu.addAction(label, lambda t=t: self._add_element(t))
@@ -585,6 +681,10 @@ class ControlWindow(QMainWindow):
             b.setToolTip(tip)
             b.clicked.connect(slot)
             btns.addWidget(b)
+        for i in range(btns.count()):                      # compact, and never narrower than the label
+            b = btns.itemAt(i).widget()
+            b.setStyleSheet("padding: 5px 8px;")
+            b.setMinimumWidth(b.sizeHint().width())
         listcol.addLayout(btns)
         lw = QWidget()
         lw.setLayout(listcol)
@@ -624,44 +724,58 @@ class ControlWindow(QMainWindow):
     def _build_inputs(self) -> QGroupBox:
         g = QGroupBox("INPUTS — USB-RS485")
         v = QVBoxLayout(g)
-        form = QFormLayout()
-        self.lt_combo = QComboBox()
-        self.lt_combo.setEditable(True)
-        self.lt_combo.setToolTip("USB adapter wired to the Limitimer data port (19200 baud).\n"
-                                 "You can also type socket://host:port for an RS-485-to-Ethernet converter.")
-        self.lt_status = QLabel()
-        form.addRow("Limitimer", self.lt_combo)
-        form.addRow("", self.lt_status)
-        self.pc_combo = QComboBox()
-        self.pc_combo.setEditable(True)
-        self.pc_combo.setToolTip("USB adapter wired to the Perfect Cue data port.")
-        self.pc_baud = QComboBox()
-        for b in PC_BAUDS:
-            self.pc_baud.addItem(str(b), b)
-        self.pc_baud.setToolTip("Baud rate of the Perfect Cue data link. If presses don't show up, try 9600.")
-        self.pc_status = QLabel()
-        form.addRow("Perfect Cue", self.pc_combo)
-        form.addRow("Baud", self.pc_baud)
-        form.addRow("", self.pc_status)
-        v.addLayout(form)
+        v.setSpacing(6)
 
-        self.connect_btn = QPushButton("Connect")
-        self.connect_btn.setCheckable(True)
-        self.connect_btn.clicked.connect(self._toggle_connect)
-        self.detect_btn = QPushButton("Detect")
-        self.detect_btn.setToolTip("Listen on every USB adapter and work out which is which")
-        self.detect_btn.clicked.connect(self._start_detect)
-        swap = QPushButton("Swap")
-        swap.setToolTip("Swap the two adapters")
-        swap.clicked.connect(self._swap_ports)
-        refresh = QPushButton("⟳")
-        refresh.setToolTip("Refresh port list")
-        refresh.clicked.connect(self._refresh_ports)
+        def heading(text):
+            lbl = QLabel(text)
+            lbl.setStyleSheet("color: #C8C8C8; font-weight: 600;")
+            return lbl
+
+        for kind, title, tip in (
+                ("lt", "Limitimer", "The USB-RS485 adapter wired to the Limitimer's data port."),
+                ("pc", "Perfect Cue", "The USB-RS485 adapter wired to the Perfect Cue receiver's data port.")):
+            if kind == "pc":
+                v.addSpacing(4)
+            v.addWidget(heading(title))
+            combo = Combo()
+            combo.setToolTip(tip + "\nPick it here, then press Connect.")
+            combo.activated.connect(lambda i, k=kind: self._port_picked(k, i))
+            v.addWidget(combo)
+            row = QHBoxLayout()
+            lbl = QLabel(f"{BAUD} 8N1")
+            lbl.setObjectName("dim")
+            lbl.setToolTip("The Limitimer and Perfect Cue data links are fixed at 19200 baud, 8N1.")
+            row.addWidget(lbl)
+            row.addStretch()
+            btn = QPushButton("Connect")
+            btn.setCheckable(True)
+            btn.setMinimumWidth(110)
+            btn.clicked.connect(lambda on, k=kind: self._connect_clicked(k, on))
+            row.addWidget(btn)
+            v.addLayout(row)
+            status = QLabel()
+            status.setWordWrap(True)
+            v.addWidget(status)
+            if kind == "lt":
+                self.lt_combo, self.lt_connect, self.lt_status = combo, btn, status
+            else:
+                self.pc_combo, self.pc_connect, self.pc_status = combo, btn, status
+
+        # tools
+        v.addSpacing(4)
         self.demo_btn = QPushButton("Demo")
         self.demo_btn.setCheckable(True)
         self.demo_btn.setToolTip("Simulated Limitimer and Perfect Cue, through the real decoder")
         self.demo_btn.clicked.connect(self._toggle_demo)
-        v.addLayout(self._row(self.connect_btn, self.detect_btn, swap, refresh, self.demo_btn))
+        self.show_all_ports = QCheckBox("Show all serial ports")
+        self.show_all_ports.setToolTip("Also list non-USB ports (Bluetooth, debug console…)")
+        self.show_all_ports.toggled.connect(lambda _on: self._refresh_ports(force=True))
+        tools = QHBoxLayout()
+        tools.addWidget(self.demo_btn)
+        tools.addSpacing(8)
+        tools.addWidget(self.show_all_ports)
+        tools.addStretch()
+        v.addLayout(tools)
 
         self.detect_label = QLabel()
         self.detect_label.setWordWrap(True)
@@ -684,19 +798,86 @@ class ControlWindow(QMainWindow):
             test.addWidget(b)
         test.addStretch()
         v.addLayout(test)
-        self.autoconnect = QCheckBox("Connect on launch")
-        v.addWidget(self.autoconnect)
-        self._set_links()
         return g
+
+    # Limitimer DIP switches as reported in its status data. 1 (master/slave) and
+    # 10 (RF) aren't in the status message, so they aren't shown.
+    _DIPS = (
+        ("2", "Program 4 format", lambda st: ("MM:SS", "#00E07A") if st.session_minutes else ("HH:MM", "#A98BFF")),
+        ("3", "Programs 1–3 format", lambda st: ("MM:SS", "#00E07A") if st.program_minutes else ("HH:MM", "#A98BFF")),
+        ("4", "Direction", lambda st: ("Count down", "#FF8A00") if st.count_down else ("Count up", "#4AB0FF")),
+        ("5", "At zero", lambda st: ("Keep counting", "#FFB000") if st.continue_after_zero else ("Stop at 0", "#C8C8C8")),
+        ("6", "Beep volume", lambda st: ("Loud", "#FF3B3B") if st.beep_loud else ("Soft", "#C8C8C8")),
+        ("7+8", "Sound", lambda st: (st.beep_type.name.title(), "#FFD000" if st.beep_type else "#7A7A7A")),
+        ("9", "Changes", lambda st: ("Allowed", "#00E07A") if st.permit_changes else ("Locked", "#FF3B3B")),
+    )
+
+    def _build_dips(self) -> QGroupBox:
+        g = QGroupBox("LIMITIMER DIP SWITCHES")
+        v = QVBoxLayout(g)
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(10)
+        grid.setVerticalSpacing(3)
+        self._dip_values: List[QLabel] = []
+        for row, (num, name, _fn) in enumerate(self._DIPS):
+            n = QLabel(num)
+            n.setObjectName("dim")
+            n.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            n.setFixedWidth(30)
+            val = QLabel("—")
+            val.setStyleSheet("font-weight: 600;")
+            val.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            grid.addWidget(n, row, 0)
+            grid.addWidget(QLabel(name), row, 1)
+            grid.addWidget(val, row, 2)
+            self._dip_values.append(val)
+        grid.setColumnStretch(1, 1)
+        v.addLayout(grid)
+        self.dip_note = QLabel()
+        self.dip_note.setObjectName("dim")
+        self.dip_note.setWordWrap(True)
+        v.addWidget(self.dip_note)
+        self._dip_key = None
+        self._update_dips()
+        return g
+
+    def _update_dips(self):
+        """Refresh the DIP panel (cheap; only repaints when something changed)."""
+        if not hasattr(self, "_dip_values"):
+            return
+        st = self.lt_state
+        live = self.lt_link == LinkState.LIVE
+        values = tuple(fn(st) for _n, _name, fn in self._DIPS) if st else None
+        key = (values, live, self.demo)
+        if key == self._dip_key:
+            return
+        self._dip_key = key
+        for i, lbl in enumerate(self._dip_values):
+            if values is None:
+                lbl.setText("—")
+                lbl.setStyleSheet("font-weight: 600; color: #555;")
+            else:
+                text, color = values[i]
+                lbl.setText(text)
+                lbl.setStyleSheet(f"font-weight: 600; color: {color if live else '#6A6A6A'};")
+        if values is None:
+            self.dip_note.setText("Connect the Limitimer to read its switches.")
+        elif self.demo:
+            self.dip_note.setText("Demo values. Switches 1 (mode) and 10 (RF) aren't reported by the Limitimer.")
+        elif not live:
+            self.dip_note.setText("Last values seen — Limitimer data has stopped.")
+        else:
+            self.dip_note.setText("Read live from the Limitimer. Switches 1 (mode) and 10 (RF) "
+                                  "aren't in its status data.")
 
     def _build_output(self) -> QGroupBox:
         g = QGroupBox("OUTPUT")
         form = QFormLayout(g)
-        self.mode_combo = QComboBox()
+        self.mode_combo = Combo()
         for k, label in MODES.items():
             self.mode_combo.addItem(label, k)
         self.mode_combo.currentIndexChanged.connect(self._output_settings_changed)
-        self.screen_combo = QComboBox()
+        self.screen_combo = Combo()
         self.screen_combo.currentIndexChanged.connect(self._output_settings_changed)
         self._refresh_screens()
         form.addRow("Mode", self.mode_combo)
@@ -736,125 +917,347 @@ class ControlWindow(QMainWindow):
         return g
 
     def _build_osc(self) -> QGroupBox:
-        g = QGroupBox("OSC OUT")
+        g = QGroupBox("OSC")
         form = QFormLayout(g)
         self.osc_enable = QCheckBox("Send OSC")
         self.osc_enable.setEnabled(OSC_AVAILABLE)
         self.osc_enable.toggled.connect(self._rebuild_osc)
         self.osc_target = QLineEdit("127.0.0.1:5000")
         self.osc_prefix = QLineEdit("/dsan")
+        self.osc_prefix.setToolTip("Address prefix for OSC out and OSC in, e.g. /dsan/perfectcue/next")
         self.osc_status = QLabel("" if OSC_AVAILABLE else "python-osc not installed")
         self.osc_status.setObjectName("dim")
         form.addRow(self.osc_enable)
         form.addRow("Host:port", self.osc_target)
         form.addRow("Prefix", self.osc_prefix)
         form.addRow(self.osc_status)
+
+        self.osc_in_enable = QCheckBox("Receive OSC (Perfect Cue control)")
+        self.osc_in_enable.setEnabled(OSC_AVAILABLE)
+        self.osc_in_enable.setToolTip(
+            "Listen for commands, prefix + …\n"
+            "  /perfectcue/next · /prev · /blank 1|0      show a cue (as if pressed)\n"
+            "  /perfectcue/press next|prev|blank_on|blank_off\n"
+            "  /perfectcue/led next|prev|blank_on|blank_off|error    light the Perfect Cue LEDs\n"
+            "  /perfectcue/command forward|reverse|blank_on|blank_off   receiver command")
+        self.osc_in_enable.toggled.connect(self._rebuild_osc_in)
+        self.osc_in_port = QSpinBox()
+        self.osc_in_port.setRange(1024, 65535)
+        self.osc_in_port.setValue(9000)
+        self.osc_in_status = QLabel("")
+        self.osc_in_status.setObjectName("dim")
+        self.osc_in_status.setWordWrap(True)
+        form.addRow(self.osc_in_enable)
+        form.addRow("Listen port", self.osc_in_port)
+        form.addRow(self.osc_in_status)
+        self.osc_prefix.textChanged.connect(
+            lambda t: self.osc_in and setattr(self.osc_in, "prefix", (t or "/dsan").rstrip("/")))
+        self.sig.osc_press.connect(lambda b: self._on_pc_button(b, test=True))
+        self.sig.osc_message.connect(self._on_osc_message)
         return g
 
-    # ── ports ───────────────────────────────────────────────────────────────────
+    def _build_millumin(self) -> QGroupBox:
+        g = QGroupBox("MILLUMIN")
+        form = QFormLayout(g)
+        self.mm_enable = QCheckBox("Receive Millumin feedback")
+        self.mm_enable.setEnabled(OSC_AVAILABLE)
+        self.mm_enable.setToolTip("Clip name, duration, elapsed / remaining time, play state, loop and freeze "
+                                  "from Millumin's OSC feedback. Use the Millumin source on timers, progress "
+                                  "bars and lights, and {clip} {remaining} {state}… in labels.")
+        self.mm_enable.toggled.connect(self._rebuild_millumin)
+        self.mm_port = QSpinBox()
+        self.mm_port.setRange(1024, 65535)
+        self.mm_port.setValue(5001)
+        self.mm_layer = Combo()
+        self.mm_layer.setEditable(True)
+        self.mm_layer.addItem("Selected layer", "")
+        self.mm_layer.setToolTip("Follow Millumin's selected layer, or pick / type a layer name")
+        self.mm_layer.lineEdit().setPlaceholderText("Selected layer")
+        thresholds = QHBoxLayout()
+        self.mm_yellow = QSpinBox()
+        self.mm_red = QSpinBox()
+        for w, val, tip in ((self.mm_yellow, 30, "Timers turn yellow with this many seconds left"),
+                            (self.mm_red, 10, "Timers turn red with this many seconds left")):
+            w.setRange(0, 3600)
+            w.setSuffix(" s")
+            w.setValue(val)
+            w.setToolTip(tip)
+        for text, w in (("Yellow", self.mm_yellow), ("Red", self.mm_red)):
+            lbl = QLabel(text)
+            lbl.setObjectName("dim")
+            thresholds.addWidget(lbl)
+            thresholds.addWidget(w)
+        thresholds.addStretch()
+        self.mm_status = QLabel("" if OSC_AVAILABLE else "python-osc not installed")
+        self.mm_status.setWordWrap(True)
+        self.mm_hint = QLabel()
+        self.mm_hint.setObjectName("dim")
+        self.mm_hint.setWordWrap(True)
+        form.addRow(self.mm_enable)
+        form.addRow("Listen port", self.mm_port)
+        form.addRow("Layer", self.mm_layer)
+        form.addRow("Last seconds", thresholds)
+        form.addRow(self.mm_status)
+        form.addRow(self.mm_hint)
+        self.sig.mm_message.connect(self._on_mm_message)
+        return g
 
-    def _refresh_ports(self):
+    def mm_layer_name(self) -> str:
+        text = self.mm_layer.currentText().strip()
+        return "" if text in ("", "Selected layer") else text
+
+    def _rebuild_millumin(self, *_):
+        if self.mm_rx:
+            self.mm_rx.close()
+            self.mm_rx = None
+        on = OSC_AVAILABLE and self.mm_enable.isChecked()
+        self.mm_port.setEnabled(not on)
+        if not on:
+            self.mm_status.setText("")
+            self.mm_hint.setText("")
+            return
+        from ..millumin import MilluminReceiver
+        port = self.mm_port.value()
+        try:
+            self.mm_rx = MilluminReceiver(port, on_message=self.sig.mm_message.emit)
+        except OSError as e:
+            self.mm_enable.setChecked(False)
+            self._status(self.mm_status, f"Can't listen on {port}: {e.strerror or e} — pick another port",
+                         "#FF3B3B")
+            return
+        self.mm_hint.setText(f"In Millumin: Device Manager (⌘K) → OSC → turn on API feedback and send it "
+                             f"to this computer's IP address, port {port}.")
+        self._update_millumin()
+
+    def _on_mm_message(self, address: str, args, used: bool):
+        self.debug_tap.millumin(address, tuple(args), used)
+
+    def _update_millumin(self):
+        """Status line and the layer list (called every second)."""
+        rx = self.mm_rx
+        if rx is None:
+            return
+        known = rx.tracker.layers()
+        have = [self.mm_layer.itemText(i) for i in range(1, self.mm_layer.count())]
+        if known != have:
+            text = self.mm_layer.currentText()
+            self.mm_layer.blockSignals(True)
+            while self.mm_layer.count() > 1:
+                self.mm_layer.removeItem(1)
+            for n in known:
+                self.mm_layer.addItem(n, n)
+            self.mm_layer.setCurrentText(text)
+            self.mm_layer.blockSignals(False)
+        v = rx.tracker.view(self.mm_layer_name())
+        if not rx.tracker.received:
+            self._status(self.mm_status, f"● Waiting for Millumin on port {rx.port}", "#FFB000")
+        elif v is None:
+            self._status(self.mm_status, "● Connected — nothing playing on this layer", "#00E07A")
+        elif not v.live:
+            self._status(self.mm_status, "● No feedback from Millumin for a while", "#FFB000")
+        else:
+            from ..millumin import format_time
+            mode = {"loop": " · LOOP", "freeze": ""}.get(v.mode, "")
+            left = f" · {format_time(v.remaining, round_up=True)} left" if v.duration else ""
+            self._status(self.mm_status, f"● {v.clip or v.layer} — {v.status}{mode}{left}", "#00E07A")
+
+    # ── ports ───────────────────────────────────────────────────────────────────
+    #
+    # self.refs["lt"/"pc"] is the source of truth: the adapter chosen for each
+    # device, remembered by USB serial number / socket (PortRef); self.want[...] is
+    # whether the operator has it connected. Changing the port of a
+    # connected device reconnects it. The list is re-scanned every 2 s, so
+    # adapters appear as they're plugged in, and a connected adapter that comes
+    # back (even under a new /dev name) reconnects by itself.
+
+    _URL_ITEM = "__url__"
+
+    def _combo(self, kind: str) -> QComboBox:
+        return self.lt_combo if kind == "lt" else self.pc_combo
+
+    def _visible_ports(self) -> List[portsmod.PortInfo]:
+        infos = list(self._port_infos.values())
+        if not self.show_all_ports.isChecked():
+            infos = [p for p in infos if p.is_usb]
+        return sorted(infos, key=lambda p: (not p.is_usb, p.device))
+
+    def _refresh_ports(self, force: bool = False):
         infos = portsmod.list_ports()
+        sig = tuple(sorted((p.device, p.serial_number, p.location) for p in infos))
+        changed = sig != getattr(self, "_ports_sig", None)
+        self._ports_sig = sig
         self._port_infos = {p.device: p for p in infos}
-        for combo in (self.lt_combo, self.pc_combo):
-            current = self._combo_port(combo)
+        if changed or force:
+            self._rebuild_port_combos()
+        if changed and not self.demo and not self._detecting:
+            for kind in ("lt", "pc"):
+                ref = self.refs.get(kind)
+                if ref and self.want[kind] and self._resolved(kind) != self._running_port(kind):
+                    self._apply_device(kind)     # adapter (re)appeared or moved
+        self._update_activity()
+
+    def _rebuild_port_combos(self):
+        ports = self._visible_ports()
+        for kind in ("lt", "pc"):
+            combo = self._combo(kind)
+            other = self._resolved("pc" if kind == "lt" else "lt")
             combo.blockSignals(True)
             combo.clear()
-            combo.addItem("— none —", "")
-            for p in infos:
-                combo.addItem(p.label(), p.device)
-            if current:
-                i = combo.findData(current)
-                if i < 0:
-                    combo.addItem(current, current)
-                    i = combo.count() - 1
-                combo.setCurrentIndex(i)
+            combo.addItem("Off — not used", "")
+            for p in ports:
+                used = "   (used by " + ("Perfect Cue" if kind == "lt" else "Limitimer") + ")" \
+                    if p.device == other else ""
+                combo.addItem(p.short_label() + used, p.device)
+            if not ports:
+                combo.addItem("No USB serial adapters found — plug one in", None)
+                combo.model().item(combo.count() - 1).setEnabled(False)
+            ref = self.refs.get(kind)
+            dev = self._resolved(kind)
+            if ref and not dev:
+                combo.addItem(f"{ref.description or os.path.basename(ref.device)} — not plugged in", "__missing__")
+            elif ref and combo.findData(dev) < 0:
+                combo.addItem(dev, dev)          # a URL such as socket://host:port
+            combo.addItem("Network adapter (socket://host:port)…", self._URL_ITEM)
+            if ref is None:
+                combo.setCurrentIndex(0)
+            else:
+                i = combo.findData(dev if dev else "__missing__")
+                combo.setCurrentIndex(max(0, i))
             combo.blockSignals(False)
 
-    @staticmethod
-    def _combo_port(combo: QComboBox) -> str:
-        data = combo.currentData()
-        text = combo.currentText().strip()
-        if data is not None and combo.itemText(combo.currentIndex()) == text:
-            return data
-        return "" if text.startswith("—") else text
+    def _resolved(self, kind: str) -> Optional[str]:
+        ref = self.refs.get(kind)
+        return ref.resolve(self._port_infos.values()) if ref else None
 
-    def _select_port(self, combo: QComboBox, device: Optional[str]):
-        if not device:
-            combo.setCurrentIndex(0)
+    def _running_port(self, kind: str) -> Optional[str]:
+        dev = self.limitimer if kind == "lt" else self.perfectcue
+        return dev.port if dev else None
+
+    def _port_picked(self, kind: str, index: int):
+        """The operator chose an entry in one of the dropdowns."""
+        combo = self._combo(kind)
+        data = combo.itemData(index)
+        if data == "__missing__" or data is None:
             return
-        i = combo.findData(device)
-        if i < 0:
-            combo.addItem(device, device)
-            i = combo.count() - 1
-        combo.setCurrentIndex(i)
-
-    def _ref_for(self, device: str) -> Optional[dict]:
-        if not device:
-            return None
-        info = self._port_infos.get(device)
-        return (portsmod.PortRef.of(info) if info else portsmod.PortRef.url(device)).to_dict()
+        if data == self._URL_ITEM:
+            from PyQt6.QtWidgets import QInputDialog
+            current = self.refs.get(kind)
+            text, ok = QInputDialog.getText(
+                self, "Network adapter", "RS-485-to-Ethernet converter address:",
+                text=current.device if current and "://" in current.device else "socket://192.168.1.50:4001")
+            if not ok or "://" not in text.strip():
+                self._rebuild_port_combos()
+                return
+            new_ref = portsmod.PortRef.url(text.strip())
+        elif data == "":
+            new_ref = None
+            self.want[kind] = False
+        else:
+            info = self._port_infos.get(data)
+            new_ref = portsmod.PortRef.of(info) if info else portsmod.PortRef.url(data)
+        other = "pc" if kind == "lt" else "lt"
+        old_ref = self.refs.get(kind)
+        moved_other = False
+        if new_ref and self._resolved(other) and new_ref.resolve(self._port_infos.values()) == self._resolved(other):
+            # Picked the adapter the other device is using: swap them.
+            self.refs[other] = old_ref
+            if old_ref is None:
+                self.want[other] = False
+            moved_other = True
+        self.refs[kind] = new_ref
+        if self.demo:
+            self._toggle_demo(False)      # leaving demo applies both refs
+        else:
+            self._apply_device(kind)
+            if moved_other:
+                self._apply_device(other)
+        if moved_other:
+            name = "Perfect Cue" if other == "pc" else "Limitimer"
+            self.statusBar().showMessage(f"That adapter was the {name}'s — swapped them.", 6000)
+        self._save_ports()
 
     def _swap_ports(self):
-        a, b = self._combo_port(self.lt_combo), self._combo_port(self.pc_combo)
-        self._select_port(self.lt_combo, b)
-        self._select_port(self.pc_combo, a)
-        if self.connect_btn.isChecked():
-            self._disconnect()
-            self._connect()
-
-    # ── connect / demo ──────────────────────────────────────────────────────────
-
-    def _toggle_connect(self, on: bool):
-        if on:
-            if self.demo:
-                self._stop_devices()
-            if not self._connect():
-                self.connect_btn.setChecked(False)
-        else:
-            self._disconnect()
-
-    def _connect(self) -> bool:
-        lt_port = self._combo_port(self.lt_combo)
-        pc_port = self._combo_port(self.pc_combo)
-        if not lt_port and not pc_port:
-            self.statusBar().showMessage("Choose at least one port, or press Detect", 5000)
-            return False
-        if lt_port and lt_port == pc_port:
-            self.statusBar().showMessage("The Limitimer and Perfect Cue can't share one adapter", 6000)
-            return False
-        self._stop_devices()
-        self.demo_btn.setChecked(False)
-        if lt_port:
-            self._start_limitimer(Limitimer(lt_port))
-        if pc_port:
-            self._start_perfectcue(PerfectCue(pc_port, baudrate=self.pc_baud.currentData()))
-        self.connect_btn.setChecked(True)
-        self.connect_btn.setText("Disconnect")
+        self.refs["lt"], self.refs["pc"] = self.refs.get("pc"), self.refs.get("lt")
         self._save_ports()
-        self._rebuild_osc()
-        return True
+        if not self.demo:
+            self._apply_device("lt")
+            self._apply_device("pc")
+        self._rebuild_port_combos()
 
-    def _disconnect(self):
-        self._stop_devices()
-        self.demo_btn.setChecked(False)
-        self.connect_btn.setChecked(False)
-        self.connect_btn.setText("Connect")
+    # ── devices ─────────────────────────────────────────────────────────────────
+
+    def _connect_clicked(self, kind: str, on: bool):
+        if on and not self.refs.get(kind):
+            self._connect_btn(kind).setChecked(False)
+            self.statusBar().showMessage("Pick an adapter for it first", 5000)
+            return
+        if self.demo:
+            self._toggle_demo(False)
+        self.want[kind] = on
+        self._apply_device(kind)
+        self._save_ports()
+
+    def _connect_btn(self, kind: str) -> QPushButton:
+        return self.lt_connect if kind == "lt" else self.pc_connect
+
+    def _sync_connect_buttons(self):
+        for kind in ("lt", "pc"):
+            btn = self._connect_btn(kind)
+            on = self.want[kind] and not self.demo
+            btn.setChecked(on)
+            btn.setText("Disconnect" if on else "Connect")
+            btn.setEnabled(not self.demo)
+
+    def _make_device(self, kind: str, port: str):
+        if port == "sim":
+            dev = Limitimer.simulated() if kind == "lt" else PerfectCue.simulated(interval=2.5)
+            dev.port = "sim"
+            return dev
+        if kind == "lt":
+            return Limitimer(port, baudrate=BAUD)
+        return PerfectCue(port, baudrate=BAUD)
+
+    def _apply_device(self, kind: str):
+        """Stop this device and start it again on its chosen adapter (if plugged in)."""
+        if self.demo:
+            return
+        self._stop_device(kind)
+        port = self._resolved(kind) if self.want[kind] else None
+        if port:
+            dev = self._make_device(kind, port)
+            if kind == "lt":
+                self._start_limitimer(dev)
+            else:
+                self._start_perfectcue(dev)
+        self._rebuild_port_combos()
+        self._sync_connect_buttons()
+        self._rebuild_osc()
+        self._update_activity()
+
+    def _apply_all(self):
+        self._apply_device("lt")
+        self._apply_device("pc")
 
     def _toggle_demo(self, on: bool):
         self._stop_devices()
-        self.connect_btn.setChecked(False)
-        self.connect_btn.setText("Connect")
         self.demo_btn.setChecked(on)
+        for w in (self.lt_combo, self.pc_combo):
+            w.setEnabled(not on)
         if on:
             self.demo = True
             self._start_limitimer(Limitimer.simulated())
             self._start_perfectcue(PerfectCue.simulated(interval=2.5))
             self.statusBar().showMessage("Demo: simulated Limitimer and Perfect Cue", 5000)
-        self._rebuild_osc()
+            self._rebuild_osc()
+        else:
+            self._apply_all()
+        self._sync_connect_buttons()
+        self._update_activity()
 
     def _start_limitimer(self, dev: Limitimer):
         self.limitimer = dev
+        self.debug_tap.attach_limitimer(dev)
+        self._lt_count = (0, time.monotonic(), 0.0)
         dev.on_state(self.sig.lt_state.emit)
         dev.on_link(self.sig.lt_link.emit)
         dev.on_error(lambda e: self.sig.error.emit(f"Limitimer: {e}"))
@@ -862,23 +1265,39 @@ class ControlWindow(QMainWindow):
 
     def _start_perfectcue(self, dev: PerfectCue):
         self.perfectcue = dev
+        self.debug_tap.attach_perfectcue(dev)
+        self.pc_raw_bytes = 0
+        self.pc_last_press: Optional[tuple] = None
+
+        def count(data, dev=dev):
+            if self.perfectcue is dev:
+                self.pc_raw_bytes += len(data)
+
+        dev.on_raw(count)
         dev.on_button(self.sig.pc_button.emit)
         dev.on_link(self.sig.pc_link.emit)
         dev.on_error(lambda e: self.sig.error.emit(f"Perfect Cue: {e}"))
         dev.start()
 
+    def _stop_device(self, kind: str):
+        attr = "limitimer" if kind == "lt" else "perfectcue"
+        dev = getattr(self, attr)
+        setattr(self, attr, None)
+        if dev:
+            dev.stop()
+        if kind == "lt":
+            self.lt_state = None
+            self.lt_link = LinkState.CLOSED
+        else:
+            self.pc_link_state = LinkState.CLOSED
+            self.cue = CueState()
+            self.pc_last_press = None
+
     def _stop_devices(self):
-        for attr in ("limitimer", "perfectcue"):
-            dev = getattr(self, attr)
-            setattr(self, attr, None)
-            if dev:
-                dev.stop()
+        self._stop_device("lt")
+        self._stop_device("pc")
         self.demo = False
-        self.lt_state = None
-        self.lt_link = LinkState.CLOSED
-        self.pc_link_state = LinkState.CLOSED
-        self.cue = CueState()
-        self._set_links()
+        self._update_activity()
         self._rebuild_osc()
 
     # ── device events (GUI thread) ───────────────────────────────────────────────
@@ -886,35 +1305,92 @@ class ControlWindow(QMainWindow):
     def _on_lt_state(self, state):
         if self.limitimer is not None:
             self.lt_state = state
+            self._update_dips()
 
     def _on_lt_link(self, link):
         if self.limitimer is None and link != LinkState.CLOSED:
             return
         self.lt_link = link if self.limitimer else LinkState.CLOSED
-        self._set_links()
+        self._update_activity()
 
     def _on_pc_link(self, link):
         if self.perfectcue is None and link != LinkState.CLOSED:
             return
         self.pc_link_state = link if self.perfectcue else LinkState.CLOSED
-        self._set_links()
+        self._update_activity()
 
     def _on_pc_button(self, button, test: bool = False):
         if not test and self.perfectcue is None:
             return
         self.cue.press(button)
+        if not test:
+            self.pc_last_press = (button, time.monotonic())
+            self._update_activity()
         if test and self.osc:
             self.osc._on_button(button)
 
-    def _set_links(self):
-        for label, link, demo in ((self.lt_status, self.lt_link, self.demo),
-                                  (self.pc_status, self.pc_link_state, self.demo)):
-            text, color = _LINK_TEXT.get(link, (link.value, "#888"))
-            if demo and link in (LinkState.LIVE, LinkState.OPEN):
-                text = "● demo"
-            label.setText(text)
-            label.setStyleSheet(f"color: {color};")
-        if self.lt_link == LinkState.STALE:
+    def _status(self, label: QLabel, text: str, color: str):
+        label.setText(text)
+        label.setStyleSheet(f"color: {color};")
+
+    def _update_activity(self):
+        """Per-device status lines: is the right adapter picked, and is data arriving?"""
+        if not hasattr(self, "lt_status"):
+            return
+        self._update_dips()
+        # Limitimer
+        lt, link = self.limitimer, self.lt_link
+        if self.demo:
+            self._status(self.lt_status, "● demo — simulated Limitimer", "#00E07A")
+        elif not self.refs.get("lt"):
+            self._status(self.lt_status, "Not used — pick its adapter above", "#6A6A6A")
+        elif not self.want["lt"]:
+            self._status(self.lt_status, "Disconnected — press Connect", "#6A6A6A")
+        elif lt is None:
+            self._status(self.lt_status, "● adapter not plugged in — will connect when it is", "#FF3B3B")
+        else:
+            st = lt.stats
+            name = os.path.basename(lt.port)
+            if link == LinkState.LIVE:
+                self._status(self.lt_status, "● Connected", "#00E07A")
+            elif link in (LinkState.WAITING, LinkState.STALE) and st["errors"] and not st["packets"]:
+                self._status(self.lt_status, f"● {name}: data arriving but no valid frames — "
+                                             "RS-485 A/B swapped, or this is the Perfect Cue adapter?", "#FF3B3B")
+            elif link == LinkState.WAITING:
+                self._status(self.lt_status, "● Waiting for Limitimer data — is it on, and is this its adapter?",
+                             "#FFB000")
+            elif link == LinkState.STALE:
+                self._status(self.lt_status, f"● {name}: data stopped — output shows NO SIGNAL", "#FF3B3B")
+            elif link == LinkState.RECONNECTING:
+                err = f" ({lt.last_error})" if lt.last_error else ""
+                self._status(self.lt_status, f"● {name}: can't open, retrying{err}", "#FF3B3B")
+            else:
+                self._status(self.lt_status, f"● {name}: {link.value}", "#FFB000")
+        # Perfect Cue
+        cue, plink = self.perfectcue, self.pc_link_state
+        if self.demo:
+            self._status(self.pc_status, "● demo — simulated Perfect Cue", "#00E07A")
+        elif not self.refs.get("pc"):
+            self._status(self.pc_status, "Not used — pick its adapter above", "#6A6A6A")
+        elif not self.want["pc"]:
+            self._status(self.pc_status, "Disconnected — press Connect", "#6A6A6A")
+        elif cue is None:
+            self._status(self.pc_status, "● adapter not plugged in — will connect when it is", "#FF3B3B")
+        else:
+            name = os.path.basename(cue.port)
+            last = getattr(self, "pc_last_press", None)
+            if plink == LinkState.OPEN:
+                if getattr(self, "pc_raw_bytes", 0) and not last:
+                    self._status(self.pc_status, f"● {name}: data arriving but not Perfect Cue buttons — "
+                                                 "check the wiring (pins 2/4 differ from the Limitimer), or is this the Limitimer adapter?", "#FFB000")
+                else:
+                    self._status(self.pc_status, "● Connected", "#00E07A")
+            elif plink == LinkState.RECONNECTING:
+                err = f" ({cue.last_error})" if cue.last_error else ""
+                self._status(self.pc_status, f"● {name}: can't open, retrying{err}", "#FF3B3B")
+            else:
+                self._status(self.pc_status, f"● {name}: {plink.value}", "#FFB000")
+        if link == LinkState.STALE and not self.demo:
             self.statusBar().showMessage("Limitimer data stopped — the output is showing NO SIGNAL")
 
     # ── detection ───────────────────────────────────────────────────────────────
@@ -922,18 +1398,16 @@ class ControlWindow(QMainWindow):
     def _start_detect(self):
         if self._detecting:
             return
-        self._disconnect()
-        self._stop_devices()
+        if self.demo:
+            self._toggle_demo(False)
+        self._stop_devices()            # free the ports so detection can open them
         self._detecting = True
-        self.detect_btn.setEnabled(False)
-        self.connect_btn.setEnabled(False)
+        self.detect_action.setEnabled(False)
         self.detect_label.show()
         self.detect_label.setText("Listening…")
-        baud = self.pc_baud.currentData()
-
         def work():
             try:
-                res = portsmod.detect(pc_baud=baud, on_status=self.sig.detect_status.emit)
+                res = portsmod.detect(pc_baud=BAUD, on_status=self.sig.detect_status.emit)
             except Exception as e:  # pragma: no cover
                 res = portsmod.DetectResult(notes=[f"Detect failed: {e}"])
             self.sig.detect_done.emit(res)
@@ -945,38 +1419,65 @@ class ControlWindow(QMainWindow):
 
     def _detect_finished(self, res: portsmod.DetectResult):
         self._detecting = False
-        self.detect_btn.setEnabled(True)
-        self.connect_btn.setEnabled(True)
-        self._refresh_ports()
+        self.detect_action.setEnabled(True)
         lines = []
         if res.limitimer:
-            self._select_port(self.lt_combo, res.limitimer.device)
+            self.refs["lt"] = portsmod.PortRef.of(res.limitimer)
+            self.want["lt"] = True
             n = res.probes.get(res.limitimer.device)
-            lines.append(f"Limitimer → {res.limitimer.device}"
+            lines.append(f"Limitimer → {res.limitimer.short_label()}"
                          + (f" ({n.lt_packets} packets)" if n else ""))
         if res.perfectcue:
-            self._select_port(self.pc_combo, res.perfectcue.device)
-            lines.append(f"Perfect Cue → {res.perfectcue.device}")
+            self.refs["pc"] = portsmod.PortRef.of(res.perfectcue)
+            self.want["pc"] = True
+            lines.append(f"Perfect Cue → {res.perfectcue.short_label()}")
         lines += res.notes
         self.detect_label.setText("\n".join(lines) or "Nothing found.")
-        if res.limitimer or res.perfectcue:
-            self._connect()
+        self._save_ports()
+        self._refresh_ports(force=True)
+        self._apply_all()
 
     # ── output ──────────────────────────────────────────────────────────────────
 
     def _refresh_screens(self):
-        current = self.screen_combo.currentData()
+        current = getattr(self, "_wanted_screen", None) or self.screen_combo.currentData()
         self.screen_combo.blockSignals(True)
         self.screen_combo.clear()
-        for i, s in enumerate(QGuiApplication.screens()):
-            g = s.geometry()
-            primary = " (main)" if s == QGuiApplication.primaryScreen() else ""
-            self.screen_combo.addItem(f"{i + 1}: {s.name()} {g.width()}×{g.height()}{primary}", s.name())
-        if current:
-            i = self.screen_combo.findData(current)
-            if i >= 0:
-                self.screen_combo.setCurrentIndex(i)
+        primary = QGuiApplication.primaryScreen()
+        for i, scr in enumerate(QGuiApplication.screens()):
+            g = scr.geometry()
+            tag = " (main)" if scr == primary else ""
+            self.screen_combo.addItem(f"{i + 1}: {scr.name()} {g.width()}×{g.height()}{tag}", scr.name())
+            if id(scr) not in self._watched_screens:
+                self._watched_screens.add(id(scr))
+                scr.geometryChanged.connect(lambda _g: self._screens_changed())
+        i = self.screen_combo.findData(current) if current else -1
+        if i < 0 and not current:
+            # first run: default to a second display if there is one
+            others = [k for k in range(self.screen_combo.count())
+                      if QGuiApplication.screens()[k] != primary]
+            i = others[0] if others else 0
+        if i >= 0:
+            self.screen_combo.setCurrentIndex(i)
         self.screen_combo.blockSignals(False)
+
+    def _screens_changed(self):
+        """A display was plugged in, unplugged, or changed resolution."""
+        self._refresh_screens()
+        if not self.show_output_btn.isChecked():
+            return
+        wanted = self._wanted_screen
+        present = any(scr.name() == wanted for scr in QGuiApplication.screens())
+        if self.mode_combo.currentData() == "window":
+            return
+        if present:
+            self._apply_output()           # back on its display / new resolution
+        elif self.output.mode != "window":
+            # Don't fall back to full screen on the laptop: park it in a window.
+            self.output.apply("window", None)
+            self.output_note.setText(f"Display {wanted} is disconnected — the output is in a window "
+                                     "for now and will go back when the display returns.")
+            self.output_note.setStyleSheet("color: #FFB000;")
 
     def _selected_screen(self):
         name = self.screen_combo.currentData()
@@ -994,25 +1495,28 @@ class ControlWindow(QMainWindow):
             self.output_note.setText("")
 
     def _output_settings_changed(self, *_):
+        self._wanted_screen = self.screen_combo.currentData()
         if self.show_output_btn.isChecked():
             self._apply_output()
 
     def _apply_output(self):
         mode = self.mode_combo.currentData()
         screen = self.screen_combo.currentData()
-        if mode == "fullscreen" and self._selected_screen() == self.screen():
-            if len(QGuiApplication.screens()) > 1:
-                self.output_note.setText("Full screen on the same display as this window — "
-                                         "press Esc on the output to leave.")
+        self._wanted_screen = screen
+        self.output_note.setStyleSheet("")
         self.output.apply(mode, screen)
         self.activateWindow()
         notes = {
             "window": "Resizable window. Double-click it (or press F) for full screen.",
-            "fullscreen": "Press Esc on the output to leave full screen.",
+            "fullscreen": "Covers only the chosen display. Click the output and press Esc "
+                          "(or Hide output) to leave.",
             "overlay": "Transparent and click-through. Use a layout with a transparent background "
                        "(e.g. Corner overlay).",
         }
         note = notes.get(mode, "")
+        if mode == "fullscreen" and self._selected_screen() == self.screen():
+            note = ("This is the display the control window is on, so full screen will cover it. "
+                    "Pick your second display above, or click the output and press Esc to leave.")
         if mode == "overlay" and sys.platform == "darwin" and not self.output.mac_float_applied:
             note += (" To float over full-screen Keynote/PowerPoint on macOS, install pyobjc "
                      "(pip install 'dsan[clock]'), or play the slideshow in a window.")
@@ -1038,7 +1542,43 @@ class ControlWindow(QMainWindow):
 
     # ── OSC ─────────────────────────────────────────────────────────────────────
 
+    def _rebuild_osc_in(self, *_):
+        if self.osc_in:
+            self.osc_in.close()
+            self.osc_in = None
+        on = OSC_AVAILABLE and self.osc_in_enable.isChecked()
+        self.osc_in_port.setEnabled(not on)
+        if not on:
+            self.osc_in_status.setText("")
+            return
+        port = self.osc_in_port.value()
+        host, _, out_port = self.osc_target.text().strip().rpartition(":")
+        if (self.osc_enable.isChecked() and out_port == str(port)
+                and host in ("", "127.0.0.1", "localhost", "0.0.0.0")):
+            self.osc_in_enable.setChecked(False)
+            self.osc_in_status.setText(f"Port {port} is also the OSC out target — pick another to avoid a loop")
+            return
+        try:
+            self.osc_in = OscListener(port, perfectcue=self.perfectcue,
+                                      prefix=self.osc_prefix.text() or "/dsan",
+                                      on_press=self.sig.osc_press.emit,
+                                      on_message=self.sig.osc_message.emit)
+            self.osc_in_status.setText(f"Listening on UDP {port} · {self.osc_in.prefix}/perfectcue/…")
+        except OSError as e:
+            self.osc_in_enable.setChecked(False)
+            self.osc_in_status.setText(f"Can't listen on {port}: {e.strerror or e}")
+
+    def _on_osc_message(self, address: str, args, result: str):
+        if self.osc_in is None:
+            return
+        self.debug_tap.osc_in(address, tuple(args), result)
+        shown = " ".join(str(a) for a in args)
+        self.osc_in_status.setText(f"Listening on UDP {self.osc_in.port} · {self.osc_in.received} received\n"
+                                   f"Last: {address}{' ' + shown if shown else ''} → {result}")
+
     def _rebuild_osc(self, *_):
+        if self.osc_in:
+            self.osc_in.perfectcue = self.perfectcue       # LEDs/commands follow the connected device
         if self.osc:
             self.osc.close()
             self.osc = None
@@ -1064,9 +1604,9 @@ class ControlWindow(QMainWindow):
         self.layout_obj = lay
         self.layout_path = path
         self._load_font_files()
-        self.preview.selected_id = None
+        self.preview.set_selection([])
         self._refresh_list()
-        self._select_element("")
+        self._show_selection()
         self._update_layout_label()
         self._autosave_layout()
 
@@ -1084,6 +1624,192 @@ class ControlWindow(QMainWindow):
             self.statusBar().showMessage("Corner overlay has a transparent background — "
                                          "set Output mode to Overlay to put it over slides", 8000)
 
+    # ── alignment toolbar ────────────────────────────────────────────────────────
+
+    def _tool(self, icon: str, tip: str, slot=None, checkable: bool = False) -> QToolButton:
+        b = QToolButton()
+        b.setIcon(make_icon(icon))
+        b.setIconSize(QSize(20, 20))
+        b.setToolTip(tip)
+        b.setCheckable(checkable)
+        if slot:
+            b.clicked.connect(slot)
+        return b
+
+    def _build_align_bar(self) -> QHBoxLayout:
+        h = QHBoxLayout()
+        h.setSpacing(2)
+
+        def sep():
+            line = QLabel("│")
+            line.setObjectName("dim")
+            h.addSpacing(4)
+            h.addWidget(line)
+            h.addSpacing(4)
+
+        self.undo_btn = self._tool("undo", "Undo (⌘Z)", self._undo)
+        self.redo_btn = self._tool("redo", "Redo (⇧⌘Z)", self._redo)
+        h.addWidget(self.undo_btn)
+        h.addWidget(self.redo_btn)
+        sep()
+        self._align_btns = []
+        for how, tip in (("left", "Align left edges"), ("hcenter", "Align horizontal centres"),
+                         ("right", "Align right edges"), ("top", "Align top edges"),
+                         ("vcenter", "Align vertical centres"), ("bottom", "Align bottom edges")):
+            b = self._tool(f"align-{how}", tip, lambda _=False, h_=how: self._align(h_))
+            self._align_btns.append(b)
+            h.addWidget(b)
+        h.addSpacing(4)
+        lbl = QLabel("to")
+        lbl.setObjectName("dim")
+        h.addWidget(lbl)
+        self.align_to = Combo()
+        for key, label in (("auto", "Auto"), ("canvas", "Canvas"), ("selection", "Selection"),
+                           ("title", "Title safe"), ("action", "Action safe")):
+            self.align_to.addItem(label, key)
+        self.align_to.setToolTip("Auto: one element aligns to the canvas, several align to each other")
+        self.align_to.setMinimumWidth(110)
+        self.align_to.setStyleSheet("min-width: 90px;")
+        h.addWidget(self.align_to)
+        sep()
+        self.dist_h = self._tool("dist-h", "Distribute horizontally (3 or more)", lambda: self._distribute("h"))
+        self.dist_v = self._tool("dist-v", "Distribute vertically (3 or more)", lambda: self._distribute("v"))
+        self.match_w = self._tool("match-w", "Match width of the first selected", lambda: self._match("width"))
+        self.match_h = self._tool("match-h", "Match height of the first selected", lambda: self._match("height"))
+        self.fill_btn = self._tool("fill", "Fill the canvas (or the safe area chosen in 'to')", self._fill)
+        for b in (self.dist_h, self.dist_v, self.match_w, self.match_h, self.fill_btn):
+            h.addWidget(b)
+        sep()
+        self.snap_btn = self._tool("snap", "Smart guides: snap to edges, centres and safe areas "
+                                           "(hold ⌘ while dragging to turn off)", self._editor_options, True)
+        self.snap_btn.setChecked(True)
+        self.safe_btn = self._tool("safe", "Show title-safe (90%) and action-safe (93%) areas",
+                                   self._editor_options, True)
+        self.grid_btn = self._tool("grid", "Show the grid", self._editor_options, True)
+        self.grid_combo = Combo()
+        for step, label in ((0.0, "No grid snap"), (0.01, "1%"), (0.025, "2.5%"), (0.05, "5%"), (0.1, "10%")):
+            self.grid_combo.addItem(label, step)
+        self.grid_combo.setToolTip("Grid step: dragging and arrow keys snap to it")
+        self.grid_combo.setStyleSheet("min-width: 90px;")
+        self.grid_combo.currentIndexChanged.connect(lambda _i: self._editor_options())
+        for w in (self.snap_btn, self.safe_btn, self.grid_btn, self.grid_combo):
+            h.addWidget(w)
+        h.addStretch()
+        return h
+
+    def _editor_options(self, *_):
+        c = self.preview
+        c.snap = self.snap_btn.isChecked()
+        c.show_safe = self.safe_btn.isChecked()
+        c.grid = self.grid_combo.currentData() or 0.0
+        c.show_grid = self.grid_btn.isChecked() and c.grid > 0
+        if self.grid_btn.isChecked() and not c.grid:
+            self.grid_combo.setCurrentIndex(self.grid_combo.findData(0.05))   # turning the grid on picks 5%
+        c.update()
+
+    def _update_tools(self):
+        n = len(self.preview.selected)
+        for b in self._align_btns:
+            b.setEnabled(n >= 1)
+        self.fill_btn.setEnabled(n >= 1)
+        self.dist_h.setEnabled(n >= 3)
+        self.dist_v.setEnabled(n >= 3)
+        self.match_w.setEnabled(n >= 2)
+        self.match_h.setEnabled(n >= 2)
+        self.undo_btn.setEnabled(self.history.can_undo or self._pending_change())
+        self.redo_btn.setEnabled(self.history.can_redo)
+        self.undo_action.setEnabled(self.undo_btn.isEnabled())
+        self.redo_action.setEnabled(self.redo_btn.isEnabled())
+
+    def _align_ref(self, els) -> Optional[al.Rect]:
+        mode = self.align_to.currentData()
+        return {"auto": None, "canvas": al.CANVAS, "selection": al.bounds(els),
+                "title": al.safe_rect("title"), "action": al.safe_rect("action")}[mode]
+
+    def _align(self, how: str):
+        els = self.preview.elements()
+        if els:
+            al.align(els, how, self._align_ref(els))
+            self._geometry_edited()
+
+    def _distribute(self, axis: str):
+        els = self.preview.elements()
+        if len(els) < 3:
+            self.statusBar().showMessage("Select 3 or more elements to distribute", 4000)
+            return
+        al.distribute(els, axis)
+        self._geometry_edited()
+
+    def _match(self, what: str):
+        els = self.preview.elements()
+        if len(els) < 2:
+            self.statusBar().showMessage("Select 2 or more; the first one selected sets the size", 4000)
+            return
+        al.match_size(els, what)
+        self._geometry_edited()
+
+    def _fill(self):
+        els = self.preview.elements()
+        if not els:
+            return
+        mode = self.align_to.currentData()
+        ref = al.safe_rect(mode) if mode in ("title", "action") else al.CANVAS
+        al.fill(els, ref)
+        self._geometry_edited()
+
+    def _output_pixels(self) -> tuple:
+        """Pixel size of where the layout goes, for the editor readout."""
+        out = getattr(self, "decklink_panel", None)
+        if out is not None and out.output is not None:
+            return out.output.size
+        if self.output.isVisible() and self.output.mode == "window":
+            g = self.output.geometry()
+            dpr = self.output.devicePixelRatioF()
+        else:
+            scr = self._selected_screen()
+            g, dpr = scr.geometry(), scr.devicePixelRatio()
+        return round(g.width() * dpr), round(g.height() * dpr)
+
+    # ── undo / redo ──────────────────────────────────────────────────────────────
+
+    def _pending_change(self) -> bool:
+        return self._committed is not None and self.layout_obj.to_dict() != self._committed
+
+    def _commit_history(self):
+        """Record the settled state; the previous one becomes an undo step."""
+        current = self.layout_obj.to_dict()
+        if self._committed is None:
+            self._committed = current
+        elif current != self._committed:
+            self.history.push(self._committed)
+            self._committed = current
+        self._update_tools()
+
+    def _undo(self):
+        self._commit_history()                    # don't lose an edit still inside the debounce
+        snap = self.history.undo(self.layout_obj.to_dict())
+        if snap is not None:
+            self._restore(snap)
+
+    def _redo(self):
+        snap = self.history.redo(self.layout_obj.to_dict())
+        if snap is not None:
+            self._restore(snap)
+
+    def _restore(self, snap: dict):
+        keep = list(self.preview.selected)
+        self.layout_obj = Layout.from_dict(snap)
+        self._committed = snap
+        self._load_font_files()
+        self._refresh_list()
+        self.preview.set_selection(keep)
+        self._show_selection()
+        self._update_layout_label()
+        self.settings.setValue("layout/json", self.layout_obj.to_json())
+        self._update_tools()
+
+    # ── element list & selection ─────────────────────────────────────────────────
+
     def _refresh_list(self):
         self.element_list.blockSignals(True)
         self.element_list.clear()
@@ -1099,17 +1825,26 @@ class ControlWindow(QMainWindow):
         self._sync_list_selection()
 
     def _sync_list_selection(self):
+        sel = set(self.preview.selected)
+        primary = self.preview.selected[0] if self.preview.selected else None
         self.element_list.blockSignals(True)
-        self.element_list.setCurrentRow(-1)
         for i in range(self.element_list.count()):
-            if self.element_list.item(i).data(Qt.ItemDataRole.UserRole) == self.preview.selected_id:
-                self.element_list.setCurrentRow(i)
+            item = self.element_list.item(i)
+            eid = item.data(Qt.ItemDataRole.UserRole)
+            item.setSelected(eid in sel)
+            if eid == primary:
+                self.element_list.setCurrentItem(item, self.element_list.selectionModel().SelectionFlag.NoUpdate)
         self.element_list.blockSignals(False)
 
-    def _list_row_changed(self, row: int):
-        if row < 0:
-            return
-        self._select_element(self.element_list.item(row).data(Qt.ItemDataRole.UserRole))
+    def _list_selection_changed(self):
+        items = self.element_list.selectedItems()
+        cur = self.element_list.currentItem()
+        ids = [i.data(Qt.ItemDataRole.UserRole) for i in items]
+        if cur is not None and cur.isSelected():
+            cid = cur.data(Qt.ItemDataRole.UserRole)
+            ids = [cid] + [i for i in ids if i != cid]
+        self.preview.set_selection(ids)
+        self._show_selection(sync_list=False)
 
     def _list_item_changed(self, item: QListWidgetItem):
         e = self.layout_obj.find(item.data(Qt.ItemDataRole.UserRole))
@@ -1119,18 +1854,28 @@ class ControlWindow(QMainWindow):
                 self.props.show_element(e)
             self._dirty()
 
-    def _select_element(self, element_id: str):
-        self.preview.selected_id = element_id or None
-        e = self.layout_obj.find(element_id) if element_id else None
-        self.props.setVisible(e is not None)
-        self.layout_props.setVisible(e is None)
-        self.props.show_element(e)
-        if e is None:
+    def _show_selection(self, sync_list: bool = True):
+        els = self.preview.elements()
+        self.props.setVisible(bool(els))
+        self.layout_props.setVisible(not els)
+        if len(els) == 1:
+            self.props.show_element(els[0])
+        elif els:
+            self.props.show_multi(els, self._output_pixels())
+        else:
+            self.props.show_element(None)
             self.layout_props.show_layout(self.layout_obj)
-        self._sync_list_selection()
+        if sync_list:
+            self._sync_list_selection()
+        self._update_tools()
+
+    def _select_element(self, element_id: str):
+        self.preview.set_selection([element_id] if element_id else [])
+        self._show_selection()
 
     def _selected(self) -> Optional[Element]:
-        return self.layout_obj.find(self.preview.selected_id) if self.preview.selected_id else None
+        els = self.preview.elements()
+        return els[0] if els else None
 
     def _add_element(self, type_: str):
         e = default_element(type_)
@@ -1140,25 +1885,31 @@ class ControlWindow(QMainWindow):
         self._dirty()
 
     def _duplicate_element(self):
-        e = self._selected()
-        if not e:
+        els = self.preview.elements()
+        if not els:
             return
-        d = e.copy()
-        d.name = f"{e.name} copy"
-        d.x = min(d.x + 0.02, 1 - d.w)
-        d.y = min(d.y + 0.02, 1 - d.h)
-        self.layout_obj.elements.append(d)
+        copies = []
+        for e in els:
+            d = e.copy()
+            d.name = f"{e.name} copy"
+            d.x = min(d.x + 0.02, 1 - d.w)
+            d.y = min(d.y + 0.02, 1 - d.h)
+            self.layout_obj.elements.append(d)
+            copies.append(d.id)
         self._refresh_list()
-        self._select_element(d.id)
+        self.preview.set_selection(copies)
+        self._show_selection()
         self._dirty()
 
     def _delete_element(self):
-        e = self._selected()
-        if not e:
+        els = self.preview.elements()
+        if not els:
             return
-        self.layout_obj.elements.remove(e)
+        for e in els:
+            self.layout_obj.elements.remove(e)
+        self.preview.set_selection([])
         self._refresh_list()
-        self._select_element("")
+        self._show_selection()
         self._dirty()
 
     def _move_element(self, direction: int):
@@ -1173,7 +1924,10 @@ class ControlWindow(QMainWindow):
         self._dirty()
 
     def _geometry_edited(self):
-        self.props.refresh_geometry()
+        if len(self.preview.selected) == 1:
+            self.props.refresh_geometry()
+        elif self.preview.selected:
+            self.props.show_multi(self.preview.elements(), self._output_pixels())
         self._dirty()
 
     def _props_changed(self):
@@ -1194,6 +1948,7 @@ class ControlWindow(QMainWindow):
 
     def _dirty(self):
         self._save_timer.start(400)
+        self._update_tools()
 
     def _load_font_files(self):
         for path in self.layout_obj.font_files:
@@ -1203,7 +1958,7 @@ class ControlWindow(QMainWindow):
     # ── files ───────────────────────────────────────────────────────────────────
 
     def _open_layout(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Open layout", "", "DSAN Clock layout (*.json)")
+        path = files.open_path(self, "Open layout", "Confidence layout (*.json)", "layouts")
         if not path:
             return
         try:
@@ -1214,6 +1969,7 @@ class ControlWindow(QMainWindow):
     def _save_layout(self):
         if not self.layout_path:
             return self._save_layout_as()
+        self.layout_path = files.absolute(self.layout_path, "layouts")   # never relative to the app's cwd
         try:
             self.layout_obj.save(self.layout_path)
             self.statusBar().showMessage(f"Saved {self.layout_path}", 4000)
@@ -1222,8 +1978,9 @@ class ControlWindow(QMainWindow):
         self._update_layout_label()
 
     def _save_layout_as(self):
-        name = (self.layout_obj.name or "layout").replace("/", "-")
-        path, _ = QFileDialog.getSaveFileName(self, "Save layout", f"{name}.json", "DSAN Clock layout (*.json)")
+        name = re.sub(r'[/\\:*?"<>|]', "-", self.layout_obj.name or "layout").strip() or "layout"
+        path = files.save_path(self, "Save layout", f"{name}.json", "Confidence layout (*.json)",
+                               "layouts", suffix=".json")
         if path:
             self.layout_path = path
             self._save_layout()
@@ -1231,31 +1988,33 @@ class ControlWindow(QMainWindow):
     # ── settings ────────────────────────────────────────────────────────────────
 
     def _autosave_layout(self):
+        self._commit_history()
         self.settings.setValue("layout/json", self.layout_obj.to_json())
         self.settings.setValue("layout/path", self.layout_path or "")
 
     def _save_ports(self):
-        self.settings.setValue("inputs/limitimer", json.dumps(self._ref_for(self._combo_port(self.lt_combo))))
-        self.settings.setValue("inputs/perfectcue", json.dumps(self._ref_for(self._combo_port(self.pc_combo))))
-        self.settings.setValue("inputs/pc_baud", self.pc_baud.currentData())
+        for kind, key in (("lt", "inputs/limitimer"), ("pc", "inputs/perfectcue")):
+            ref = self.refs.get(kind)
+            self.settings.setValue(key, json.dumps(ref.to_dict() if ref else None))
+        self.settings.setValue("inputs/lt_connected", self.want["lt"])
+        self.settings.setValue("inputs/pc_connected", self.want["pc"])
 
     def _load_settings(self):
         s = self.settings
         geo = s.value("window/geometry")
         if geo is not None:
             self.restoreGeometry(geo)
-        self._refresh_ports()
-        infos = list(self._port_infos.values())
-        for key, combo in (("inputs/limitimer", self.lt_combo), ("inputs/perfectcue", self.pc_combo)):
+        for kind, key in (("lt", "inputs/limitimer"), ("pc", "inputs/perfectcue")):
             try:
-                ref = portsmod.PortRef.from_dict(json.loads(s.value(key, "null") or "null"))
+                self.refs[kind] = portsmod.PortRef.from_dict(json.loads(s.value(key, "null") or "null"))
             except (TypeError, ValueError):
-                ref = None
-            if ref:
-                self._select_port(combo, ref.resolve(infos) or "")
-        i = self.pc_baud.findData(s.value("inputs/pc_baud", 19200, type=int))
-        self.pc_baud.setCurrentIndex(max(0, i))
-        self.autoconnect.setChecked(s.value("inputs/autoconnect", False, type=bool))
+                self.refs[kind] = None
+        for kind in ("lt", "pc"):
+            # devices that were connected when the app quit reconnect at launch
+            self.want[kind] = bool(self.refs[kind]) and s.value(f"inputs/{kind}_connected", False, type=bool)
+        self.show_all_ports.setChecked(s.value("inputs/show_all", False, type=bool))
+        self._refresh_ports(force=True)    # reconnects devices that were connected last time
+        self._sync_connect_buttons()
 
         text = s.value("layout/json", "")
         if text:
@@ -1267,35 +2026,60 @@ class ControlWindow(QMainWindow):
         self._set_layout(self.layout_obj, path)
 
         self.mode_combo.setCurrentIndex(max(0, self.mode_combo.findData(s.value("output/mode", "window"))))
-        i = self.screen_combo.findData(s.value("output/screen", ""))
-        if i >= 0:
-            self.screen_combo.setCurrentIndex(i)
+        saved = s.value("output/screen", "") or None
+        if saved:
+            self._wanted_screen = saved
+            self._refresh_screens()
         self.osc_target.setText(s.value("osc/target", "127.0.0.1:5000", type=str))
         self.osc_prefix.setText(s.value("osc/prefix", "/dsan", type=str))
         if OSC_AVAILABLE and s.value("osc/enabled", False, type=bool):
             self.osc_enable.setChecked(True)
-        if self.autoconnect.isChecked() and (self._combo_port(self.lt_combo) or self._combo_port(self.pc_combo)):
-            QTimer.singleShot(0, self._connect)
+        self.osc_in_port.setValue(s.value("osc/in_port", 9000, type=int))
+        self.mm_port.setValue(s.value("millumin/port", 5001, type=int))
+        self.mm_layer.setCurrentText(s.value("millumin/layer", "", type=str) or "Selected layer")
+        self.mm_yellow.setValue(s.value("millumin/yellow", 30, type=int))
+        self.mm_red.setValue(s.value("millumin/red", 10, type=int))
+        if OSC_AVAILABLE and s.value("millumin/enabled", False, type=bool):
+            self.mm_enable.setChecked(True)
+        if OSC_AVAILABLE and s.value("osc/in_enabled", False, type=bool):
+            self.osc_in_enable.setChecked(True)
         if s.value("output/visible", True, type=bool):
             QTimer.singleShot(0, lambda: self.show_output_btn.setChecked(True))
+        self.decklink_panel.load(s)
 
     def _save_settings(self):
         s = self.settings
         s.setValue("window/geometry", self.saveGeometry())
-        if not self.demo:
-            self._save_ports()
-        s.setValue("inputs/autoconnect", self.autoconnect.isChecked())
+        self._save_ports()
+        s.setValue("inputs/show_all", self.show_all_ports.isChecked())
         s.setValue("output/mode", self.mode_combo.currentData())
-        s.setValue("output/screen", self.screen_combo.currentData() or "")
+        s.setValue("output/screen", self._wanted_screen or self.screen_combo.currentData() or "")
         s.setValue("output/visible", self.show_output_btn.isChecked())
         s.setValue("osc/target", self.osc_target.text())
         s.setValue("osc/prefix", self.osc_prefix.text())
         s.setValue("osc/enabled", self.osc_enable.isChecked())
+        s.setValue("osc/in_port", self.osc_in_port.value())
+        s.setValue("millumin/port", self.mm_port.value())
+        s.setValue("millumin/layer", self.mm_layer_name())
+        s.setValue("millumin/yellow", self.mm_yellow.value())
+        s.setValue("millumin/red", self.mm_red.value())
+        s.setValue("millumin/enabled", self.mm_enable.isChecked())
+        s.setValue("osc/in_enabled", self.osc_in_enable.isChecked())
+        self.decklink_panel.save(s)
         self._autosave_layout()
 
     def closeEvent(self, e):
         self._save_settings()
+        self.decklink_panel.shutdown()
+        if self.debug_window is not None:
+            self.debug_window.shutdown()
         self._stop_devices()
+        if self.mm_rx:
+            self.mm_rx.close()
+            self.mm_rx = None
+        if self.osc_in:
+            self.osc_in.close()
+            self.osc_in = None
         if self.osc:
             self.osc.close()
         self.output.close()
@@ -1304,7 +2088,13 @@ class ControlWindow(QMainWindow):
 
 def main() -> int:
     app = QApplication(sys.argv)
-    app.setApplicationName("DSAN Clock")
+    app.setApplicationName("Confidence")
+    app.setApplicationVersion(__version__)
+    from pathlib import Path
+    from PyQt6.QtGui import QIcon
+    icon = Path(__file__).resolve().parents[3] / "packaging" / "icon" / "Confidence.png"   # source runs
+    if icon.exists():
+        app.setWindowIcon(QIcon(str(icon)))
     app.setOrganizationName("TRUCUE")
     w = ControlWindow()
     w.show()

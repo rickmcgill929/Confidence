@@ -39,7 +39,7 @@ lt.start()
 ```
 
 ```python
-cue = PerfectCue("/dev/tty.usbserial-B2")      # 9600 baud by default
+cue = PerfectCue("/dev/tty.usbserial-B2")      # 19200 baud by default
 cue.on_button(lambda button: print("pressed", button.name))   # NEXT / PREV / BLANK_ON / BLANK_OFF
 cue.start()
 
@@ -176,11 +176,45 @@ Use the *Generic HTTP* module with a POST to `http://HOST:8765/api/v1/perfectcue
 
 State updates go out as one OSC bundle per change, so receivers never see half an update. Use `--no-bundle` for receivers that can't handle bundles.
 
+### OSC in — Perfect Cue control
+
+`dsan serve --perfectcue PORT --osc-in 9000` (or `dsan.osc.OscListener`, or **Receive OSC** in Confidence) listens on UDP for, with the same prefix:
+
+| Address | Argument | Does |
+|---|---|---|
+| `/perfectcue/next`, `/prev` | — | act as if the button was pressed: the screen shows the cue, OSC out sends it on |
+| `/perfectcue/blank` | `1` / `0` (none = 1) | blank on / off |
+| `/perfectcue/blank_on`, `/blank_off` | — | same, as separate triggers |
+| `/perfectcue/press` | `next` · `prev` · `blank_on` · `blank_off` | any press by name |
+| `/perfectcue/led` (or `/led/NAME`) | `next` · `prev` · `blank_on` · `blank_off` · `error` | light the Perfect Cue's LEDs (master mode) |
+| `/perfectcue/command` (or `/command/NAME`) | `forward` · `reverse` · `blank_on` · `blank_off` | send a receiver command |
+
+Names aren't case-sensitive. A single `0` argument on a trigger address is ignored, so a controller button that sends 1 on press and 0 on release fires once. In Bitfocus Companion, use the *Generic OSC* module and send e.g. `/dsan/perfectcue/next` to Confidence's listen port.
+
 ---
 
-## DSAN Clock: video clock for Limitimer + Perfect Cue
+### Millumin feedback
 
-`dsan-clock` (`pip install 'dsan[clock]'`) puts the Limitimer countdown, its green/yellow/red phase lights and the Perfect Cue cue arrows on a screen. It runs on macOS and Windows and needs two USB-RS485 adapters, one per device.
+Confidence can show what [Millumin](https://www.millumin.com) is playing. Tick **Receive Millumin feedback** in the MILLUMIN box (default port 5001), then in Millumin open the Device Manager (⌘K) → OSC, turn on **API feedback** and send it to the Confidence computer's IP address and that port.
+
+- **Layer:** follow Millumin's selected layer, or pick or type a layer name.
+- **Timers, progress bars and phase lights** get a *Millumin* source. A Millumin timer shows the time remaining (counting down), the elapsed time or the duration (TRT). Colours follow Millumin's own time script: green while playing, yellow in the last 30 s, red in the last 10 s and when frozen on the last frame. Both thresholds are set in the MILLUMIN box.
+- **Label tokens:** `{clip}` `{layer}` `{column}` `{trt}` `{remaining}` `{elapsed}` `{state}` (PLAYING · PAUSED · FREEZE) `{playmode}` (LOOP · FREEZE · empty).
+- **When the media stops** (or its column is stopped), the layer is cleared: Millumin timers go blank and the tokens empty, until something starts on that layer again. Paused clips stay up.
+- **Loop and freeze** aren't in Millumin's OSC feedback, so they're worked out from the time: a jump from the end back to the start is a loop; sitting on the end without a *mediaStopped* is a freeze.
+- Millumin sends the running time only for the **selected** layer. For other layers the time runs on from *mediaStarted*.
+- The debug console (⌘D) logs every Millumin message, flagging any that aren't used; the many-per-second time updates show only with *Raw bytes* on.
+
+In Python: `dsan.millumin.MilluminReceiver(5001).tracker.view()` gives clip, duration, elapsed, remaining, state and loop/freeze for the selected layer, or pass a layer name to `view()`.
+
+## Confidence: show clock for Limitimer, Perfect Cue and Millumin
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="packaging/brand/confidence-logo.svg">
+  <img alt="Confidence" src="packaging/brand/confidence-logo-light.svg" height="56">
+</picture>
+
+Confidence (formerly DSAN Viewer; run `confidence` after `pip install 'dsan[clock]'`) puts the Limitimer countdown, its green/yellow/red phase lights and the Perfect Cue cue arrows on a screen. It runs on macOS and Windows and needs two USB-RS485 adapters, one per device.
 
 ![Confidence monitor preset](docs/confidence.png)
 
@@ -189,16 +223,45 @@ State updates go out as one OSC bundle per change, so receivers never see half a
 | Adapter | Wired to | Serial settings |
 |---|---|---|
 | USB-RS485 #1 | Limitimer data port | 19200 8N1 (fixed) |
-| USB-RS485 #2 | Perfect Cue receiver data port | 19200 8N1 by default; 9600–115200 selectable |
+| USB-RS485 #2 | Perfect Cue receiver data port | 19200 8N1 (fixed) |
 
-Wire the device's RS-485 data pair to the adapter's A/B (D+/D−) terminals. Check each device's manual for its RJ45 pinout, because the Limitimer and Perfect Cue pinouts differ. If **Detect** reports *"data is arriving but no valid Limitimer frames"*, swap A and B.
+Wire each device's RJ45 (T-568B colours) to its own adapter. **The two pinouts differ** — pins 2 and 4 are swapped between them, so a cable made for one gives garbage on the other:
+
+| RJ45 pin | Perfect Cue | Limitimer |
+|---|---|---|
+| 1 | 12 V — do not connect | 12 V — do not connect |
+| 2 (orange) | GND | RXD − (B) |
+| 3 (white/green) | RXD + (A) | RXD + (A) |
+| 4 (blue) | RXD − (B) | GND |
+
+If the debug console shows bytes that aren't button codes (Perfect Cue) or **Devices → Detect adapters** reports *"data is arriving but no valid Limitimer frames"*, the data pair is probably reversed or on the wrong pins — check against this table and swap A and B.
 
 **Inputs**
-- **Detect** listens on every USB adapter. The one carrying Limitimer packets becomes the Limitimer. The Perfect Cue is the remaining adapter, or, if there are more, whichever one sees a button press when the app prompts for it.
-- Adapters are remembered by USB serial number (then by physical USB socket), so `/dev` or `COM` names changing between plugs doesn't swap them. **Swap** fixes a wrong guess by hand.
-- Ports reconnect automatically. If Limitimer data stops for 2 seconds, timers show **NO SIGNAL** instead of freezing. You choose how: dim, text, hide, or keep the last time.
+- Each device has its own **port dropdown** and **Connect / Disconnect** button; both run at a fixed 19200 8N1. The dropdown lists your USB serial adapters by name, for example *FT232R USB UART — cu.usbserial-A10K1Q2B*. *Off* forgets the adapter. *Network adapter…* takes a `socket://host:port` address for an RS-485-to-Ethernet converter.
+- Changing the port of a connected device reconnects it straight away.
+- Whatever was connected when you quit reconnects at the next launch. Anything you'd disconnected stays disconnected, with its adapter still selected.
+- A status line under each dropdown shows whether the pick is right:
+  - Limitimer: *Connected* once data is arriving; otherwise *waiting for data*, *data but no valid frames (A/B swapped?)*.
+  - Perfect Cue: *Connected*, or *data but not Perfect Cue buttons (check the wiring)*.
+- Picking the adapter the other device is using swaps the two. **Devices → Swap Limitimer and Perfect Cue adapters** does it by hand.
+- The list re-scans every 2 seconds, so a newly plugged adapter appears by itself. A connected adapter that's unplugged shows *not plugged in*, then reconnects when it's back, even under a new `/dev` or `COM` name (it's matched by USB serial number, then by USB socket). Choices are remembered between launches.
+- **Devices → Detect adapters** works it out for you. It listens on every USB adapter: the one carrying Limitimer packets becomes the Limitimer. The Perfect Cue is the remaining adapter, or, if there are more, whichever one sees a button press when prompted.
+- Non-USB ports (Bluetooth, debug console) are hidden unless you tick *Show all serial ports*.
+- If Limitimer data stops for 2 seconds, timers show **NO SIGNAL** instead of freezing. You choose how: dim, text, hide, or keep the last time.
 - **Demo** runs simulated devices through the real decoder. **Test cue** buttons fire cue states by hand.
 - The Perfect Cue is input-only here. Sending LED commands goes through the receiver's separate RS-232 port (`PerfectCue.forward()` etc. in the library).
+
+**Debug console** (⌘D, or Devices → Debug console)
+- **Live log** of both inputs, timestamped to the millisecond:
+  - raw bytes in hex (optional)
+  - every framed Limitimer packet: status or ping, size, CRC result, or the exact reason it was rejected
+  - decoded Limitimer state, every packet or changes only
+  - Perfect Cue button bytes, with unknown bytes flagged (*wrong baud, A/B swapped, or the wrong port?*)
+- **Filters** by device and line type. **Pause**, **Mark** (inserts a divider, e.g. before pressing a button), **Clear**, **Copy**, **Save log…**
+- **Record raw…** writes every byte from both ports to a timestamped capture file (`<unix time> LT|PC <hex>`). Useful for checking the protocol against real hardware.
+- **Link stats:** packets per second, bytes per second, good / bad / zero-CRC counts, time since the last packet, Perfect Cue presses and unknown bytes.
+- **Last Limitimer status packet:** a byte-by-byte breakdown, with the config bits mapped to DIP switches and each program's flags and times. Values that changed since the previous packet are shown in amber. The same breakdown is in the library as `dsan.limitimer.annotate_status()`.
+- The console only collects data while it's open or recording. The log keeps the last 5,000 lines.
 
 **Output**
 - **Full screen** on any display, for a confidence monitor.
@@ -206,19 +269,71 @@ Wire the device's RS-485 data pair to the adapter's A/B (D+/D−) terminals. Che
 - **Overlay**: transparent, always on top and click-through, over PowerPoint, Keynote or anything else. On macOS, pyobjc (installed with the `clock` extra) lets it float over full-screen slideshows.
 
 **Layouts**
-- Elements: timer digits, phase lights, Perfect Cue indicator (◁ ● ▷ arrows, full-screen colour light, or text), progress bar, time of day, labels (`{program}`, `{mode}` tokens) and an operator message.
-- Drag to move, drag the corner to resize, arrow keys to nudge. Every element has its own colours, background with alpha, corner radius, font and alignment.
-- Timers follow the Limitimer's selected program or a fixed program. Overtime and DIP 2/3 format are set per element.
-- Presets: *Confidence monitor*, *Corner overlay*, *Cue light*, *Timer + time of day*, *All four programs*.
+- Elements: timer digits, phase lights, Perfect Cue indicator (◁ ● ▷ arrows, full-screen colour light, an outline frame whose width you set in output pixels, or text — green for NEXT, red for PREV, yellow while blanked), progress bar, time of day, labels (`{program}`, `{mode}` tokens) and an operator message.
+- Every element has its own colours, background with alpha, corner radius, font and alignment. Timers follow the Limitimer's selected program or a fixed program, and overtime and DIP 2/3 format are set per element.
+- Presets: *Confidence monitor*, *Corner overlay*, *Cue light*, *Cue frame* (a frame round the whole screen), *Timer + time of day*, *All four programs*, *Millumin countdown*.
 - Layouts save as JSON. Custom `.ttf`/`.otf` fonts can be bundled with a layout.
 - Digits are drawn in fixed-width cells, so a running clock never shifts sideways, whatever the font.
 
+**Editing a layout**
+
+| | |
+|---|---|
+| Select | Click. Shift- or ⌘-click adds or removes. Drag on empty space for a selection box. ⌘A selects all, Esc clears. The element list also takes multi-select. |
+| Move | Drag. Shift locks to horizontal or vertical. Arrow keys nudge by 0.5% (Shift ×10), or by the grid step when the grid is on. |
+| Resize | Eight handles on the selected element. Shift keeps the proportions. Option resizes from the centre. Option + arrow keys resize too. |
+| Smart guides | While dragging, edges and centres snap to the canvas edges and centre, the safe areas, and other elements. Pink lines mark other elements and teal lines mark the canvas and safe areas. Hold ⌘ to drag without snapping. |
+| Toolbar | Undo / redo (⌘Z / ⇧⌘Z). Align left, centre, right, top, middle, bottom to *Auto* (one element → canvas, several → each other), *Canvas*, *Selection*, *Title safe* or *Action safe*. Distribute horizontally or vertically (3+). Match width or height to the first selected. Fill the canvas or a safe area. Grid (1–10% steps) and safe-area overlays (title 90%, action 93%). |
+| Readout | While dragging: position and size in % and in output pixels (the output screen or window, or the DeckLink mode when SDI is on air). |
+
 **Operator**
 - Message bar with quick buttons (WRAP UP, 1 MINUTE, PLEASE STOP).
-- Optional OSC out (the same address map as above).
+- Optional OSC out (the same address map as above) and OSC in for Perfect Cue control: cues on screen, LEDs and receiver commands. Received messages show in the OSC box and the debug console.
 - Everything is remembered between launches. There's also *Connect on launch*.
 
-## Desktop viewer
+### DeckLink SDI output (cut/fill)
+
+Confidence can put the clock out on a Blackmagic DeckLink card as SDI, either fill only or **fill + key** for a switcher's downstream keyer.
+
+**Setup**
+1. Install **Blackmagic Desktop Video**, which is the driver.
+2. Download the **DeckLink SDK** from <https://www.blackmagicdesign.com/developer/> and leave it on your Desktop or in Downloads.
+3. Run `packaging/build_decklink.sh`, or just launch **Confidence.command**, which builds it automatically when the SDK is there. This compiles a small native bridge, `src/dsan/clock/native/dsan_decklink.cpp` → `libdsan_decklink.dylib`. The SDK headers are used at build time only and aren't copied into the repo.
+
+**Using it:** in the **DeckLink output — SDI** panel, pick the device, video mode, cut/fill mode and layout, then press **Start SDI output**.
+
+| Cut / fill | What comes out | Cards |
+|---|---|---|
+| Off — fill only | One SDI output. The card drops alpha, so the layout's background shows. | Any DeckLink |
+| Hardware keyer | **Fill on SDI A, key on SDI B**, frame-locked by the card (`IDeckLinkKeyer::Enable(true)`, full level) | DeckLink Duo 2, Quad 2, 4K Extreme 12G, 8K Pro G2, Studio 4K (SD), UltraStudio 4K Extreme 3 / 4K Mini / HD Mini… |
+| Separate key output | Fill on one DeckLink output, key (alpha as greyscale) on another | Any two outputs. Lock both to reference for frame accuracy |
+
+- Use a layout with a **transparent background** for keying, such as the *Corner overlay* preset, a saved layout file, or the screen layout with its background alpha set to 0. The panel warns you if the background is opaque, since that would make the key solid.
+- **Premultiplied fill:** match it to your switcher's keyer (e.g. ATEM "Pre Multiplied Key"). By default the fill is straight, like Blackmagic's KeyerOutput sample.
+- **Timing:** output runs on the card's clock (scheduled playback), so it follows genlock when reference is connected. The app renders a new picture up to 30 times a second and the card repeats it in between. The status line shows the reference lock and any late or dropped frames.
+- **Relaunch:** if the output was on air when you quit, it comes back on air at the next launch.
+- **Platforms:** macOS and Linux. Not Windows yet.
+- **Testing:** `tests/test_decklink.py` runs the real bridge against a fake DeckLink driver (`tests/native/fake_decklink.cpp`). It checks the fill and key pixels, keyer calls, error cases and shutdown. Set `DECKLINK_SDK` to the SDK folder to run it.
+
+### Standalone app
+
+Build a self-contained **Confidence.app** (no Python needed to run it) plus a `.dmg`, on a Mac:
+
+```
+packaging/build_macos.sh          # or double-click "Build Mac App.command"
+```
+
+That creates `dist/Confidence.app` and `dist/Confidence-<version>-macOS-<arch>.dmg`. It uses your python.org Python (`/usr/local/bin/python3`) and a private `.build-venv`, and it smoke-tests the built app before making the disk image.
+
+- **Apple silicon vs Intel:** the app is built for the Mac you build it on. Build on an Intel Mac, or use the GitHub workflow, for Intel.
+- **Signing:**
+  - By default the app is signed ad hoc. It opens normally on the Mac that built it. On other Macs, right-click → **Open** the first time.
+  - To share it without warnings, set `CODESIGN_IDENTITY="Developer ID Application: …"` and `NOTARY_PROFILE=<notarytool keychain profile>`. The script then signs with the hardened runtime, notarizes and staples the dmg.
+- **Windows:** run `powershell -ExecutionPolicy Bypass -File packaging\build_windows.ps1` → `dist\Confidence-<version>-Windows.zip`.
+- **GitHub:** `.github/workflows/build-clock.yml` builds all three (macOS arm64, macOS Intel, Windows) on a `v*` tag or by hand.
+- The packaged app and `confidence` share their settings (`TRUCUE / Confidence`), so switching between them keeps your ports and layouts. On first launch Confidence copies over anything an earlier version (TruTime or DSAN Viewer) had saved.
+
+## Limitimer viewer (older single-window app)
 
 `dsan-viewer` is the PyQt6 app: four program displays, DIP switch readout, the Perfect Cue panel, OSC output, a debug console, and Demo mode (the simulator). Its port fields accept `socket://host:port` too.
 
@@ -228,7 +343,7 @@ Wire the device's RS-485 data pair to the adapter's A/B (D+/D−) terminals. Che
 
 **Limitimer**: RS-485, 19200 8N1. Frames are `0x81 | 7-bit payload | 0x83 | CRC16-MODBUS (2 bytes, big-endian, not 7-bit) | 0xFF`. Status messages are 55 bytes on the wire; type `0x10` is a ping. Because the CRC is raw, it can contain `0x81`, `0x83` or `0xFF`, so the decoder counts exactly two CRC bytes rather than scanning for the end byte. Like the Go reference, a `0x0000` checksum is accepted as "CRC disabled" (`accept_zero_crc=False` to reject). The full layout is in the `dsan.limitimer` docstring.
 
-**Perfect Cue**: button presses arrive as single bytes (`0x0F` next, `0x1F` prev, `0x2F`/`0x3F` blank with LED off/on). The receiver's ASCII API is RS-232 9600 8N1: `>COMMAND CK\r`, where `CK` is the low byte of the sum of `COMMAND` plus the space (not the `>`), in uppercase hex.
+**Perfect Cue**: 19200 8N1. Button presses arrive as single bytes (`0x0F` next, `0x1F` prev, `0x2F`/`0x3F` blank with LED off/on). In master mode, bytes sent back light its LEDs: Enter (`\r`) the green arrow, an arrow key the red arrow, `R`/`T`/`Y`/`U` blink yellow and leave it on, `E`/`A`/`D` blink and leave it off, anything else blinks yellow for a while — `cue.light(pc.Led.NEXT)`. The receiver's separate ASCII API is RS-232 9600 8N1: `>COMMAND CK\r`, where `CK` is the low byte of the sum of `COMMAND` plus the space (not the `>`), in uppercase hex.
 
 Protocol reverse-engineering credit: Depili's [limitimer](https://gitlab.com/Depili/limitimer) project.
 
@@ -240,6 +355,12 @@ pytest
 ```
 
 Not affiliated with or endorsed by DSAN Corp. "Limitimer" and "Perfect Cue" are trademarks of their owner.
+
+## Brand
+
+The Confidence icon, mark and logo are in `packaging/brand/` (SVG, lettering as outlines). The mark is a countdown ring shaped like a C, running green → yellow → red like the app's timers and phase lights. `python3 packaging/brand/make_brand.py` regenerates them, and `packaging/make_icon.py` renders the app icon files.
+
+Confidence is an independent TRUCUE product and isn't affiliated with or endorsed by DSAN Corp. or Millumin (Anomes). DSAN, Limitimer and Perfect Cue are trademarks of DSAN Corp.; Millumin is a trademark of Anomes.
 
 ## License
 

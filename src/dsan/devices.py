@@ -338,7 +338,11 @@ class PerfectCue(_SerialDevice):
     >>> cue = PerfectCue("/dev/tty.usbserial-B2")
     >>> cue.on_button(lambda b: print("pressed", b.name))
     >>> cue.start()
-    >>> cue.forward()
+    >>> cue.light(pc.Led.NEXT)        # master mode: flash the green arrow
+
+    Defaults to the 19200 baud data link. For the receiver's RS-232 ASCII
+    command interface (:meth:`forward`, :meth:`blank`…) pass
+    ``baudrate=pc.RECEIVER_BAUDRATE`` (9600).
     """
 
     def __init__(self, port: Optional[str] = None, *, baudrate: int = pc.BAUDRATE, **kwargs):
@@ -364,9 +368,19 @@ class PerfectCue(_SerialDevice):
 
     def _on_bytes(self, data: bytes) -> None:
         for btn in pc.decode_buttons(data):
-            self.last_button = btn
-            self.last_button_time = time.time()
-            self._emit(self._button_cbs, btn)
+            self.press(btn)
+
+    def press(self, button: Union[pc.Button, str]) -> pc.Button:
+        """Act as if `button` was pressed on the Perfect Cue: every on_button callback runs.
+
+        Used for remote control (OSC in) and testing; nothing is sent to the device.
+        """
+        if isinstance(button, str):
+            button = pc.Button[button.strip().upper().replace("-", "_")]
+        self.last_button = button
+        self.last_button_time = time.time()
+        self._emit(self._button_cbs, button)
+        return button
 
     # -- commands --------------------------------------------------------------
 
@@ -376,6 +390,14 @@ class PerfectCue(_SerialDevice):
             cmd = pc.Command.parse(cmd)
         data = cmd.value if isinstance(cmd, pc.Command) else bytes(cmd)
         return self.write(data)
+
+    def light(self, led: Union[pc.Led, pc.Button, str]) -> bool:
+        """Light a Perfect Cue LED (master mode): a Led, a Button to mirror, or a name ('next', 'blank_on'…)."""
+        if isinstance(led, str):
+            led = pc.Led.parse(led)
+        elif isinstance(led, pc.Button):
+            led = pc.Led.for_button(led)
+        return self.write(led.value)
 
     def forward(self) -> bool:
         return self.send(pc.Command.FORWARD)

@@ -141,6 +141,14 @@ def cmd_serve(args) -> int:
                            bundle=not args.no_bundle, overtime=not args.no_overtime,
                            follow_device_format=args.follow_format)
 
+    listener = None
+    if args.osc_in:
+        if not cue:
+            print("--osc-in controls the Perfect Cue; give --perfectcue too", file=sys.stderr)
+            return 2
+        from .osc import OscListener
+        listener = OscListener(args.osc_in, args.osc_in_host, perfectcue=cue, prefix=args.osc_prefix)
+
     server = DsanServer(lt, cue, host=args.host, port=args.port, token=args.token,
                         overtime=not args.no_overtime, follow_device_format=args.follow_format)
     shown = "localhost" if args.host in ("127.0.0.1", "0.0.0.0") else args.host
@@ -151,6 +159,8 @@ def cmd_serve(args) -> int:
         print(f"  perfect cue: {args.perfectcue}")
     if bridge:
         print(f"  osc:         {bridge.host}:{bridge.port} prefix {args.osc_prefix}")
+    if listener:
+        print(f"  osc in:      udp {listener.host}:{listener.port}  {listener.prefix}/perfectcue/next|prev|blank|led|command")
     if args.host not in ("127.0.0.1", "localhost", "::1") and not args.token:
         print("  WARNING: listening on the network with no --token; anyone can send Perfect Cue commands",
               file=sys.stderr)
@@ -192,7 +202,7 @@ def build_parser() -> argparse.ArgumentParser:
                        help="Limitimer port (device path, socket://host:port, or 'sim')")
         p.add_argument("--perfectcue", "-p", metavar="PORT",
                        help="Perfect Cue receiver port (device path, socket://host:port, or 'sim')")
-        p.add_argument("--pc-baud", type=int, default=9600, help="Perfect Cue baud rate (default 9600)")
+        p.add_argument("--pc-baud", type=int, default=19200, help="Perfect Cue baud rate (default 19200)")
         p.add_argument("--stale-after", type=float, default=2.0,
                        help="seconds without data before the Limitimer link is STALE (default 2)")
         p.add_argument("--reject-zero-crc", action="store_true",
@@ -210,7 +220,7 @@ def build_parser() -> argparse.ArgumentParser:
     m.add_argument("--json", action="store_true", help="one JSON object per line")
     m.set_defaults(func=cmd_monitor)
 
-    s = sub.add_parser("serve", help="run the HTTP/WebSocket API (and optional OSC output)")
+    s = sub.add_parser("serve", help="run the HTTP/WebSocket API (and optional OSC in/out)")
     device_opts(s)
     s.add_argument("--host", default="127.0.0.1",
                    help="address to listen on (default 127.0.0.1; use 0.0.0.0 for the network)")
@@ -219,12 +229,16 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--osc", metavar="HOST:PORT", help="also send OSC to this receiver")
     s.add_argument("--osc-prefix", default="/dsan", help="OSC address prefix (default /dsan)")
     s.add_argument("--no-bundle", action="store_true", help="send OSC messages individually")
+    s.add_argument("--osc-in", metavar="PORT", type=int,
+                   help="listen for OSC Perfect Cue commands on this UDP port")
+    s.add_argument("--osc-in-host", default="0.0.0.0", help="address for --osc-in (default 0.0.0.0)")
     s.set_defaults(func=cmd_serve)
 
     snd = sub.add_parser("send", help="send one command to a Perfect Cue receiver")
     snd.add_argument("port")
     snd.add_argument("command", help="forward | reverse | blank_on | blank_off")
-    snd.add_argument("--pc-baud", type=int, default=9600)
+    snd.add_argument("--pc-baud", type=int, default=9600,
+                     help="receiver ASCII interface baud (default 9600)")
     snd.set_defaults(func=cmd_send)
     return ap
 

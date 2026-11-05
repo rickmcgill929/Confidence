@@ -1,0 +1,39 @@
+# Builds Confidence for macOS (Apple silicon + Intel) and Windows.
+# Runs on version tags (v*) or by hand from the Actions tab; the builds are
+# attached to the run as artifacts.
+name: Build Confidence
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+jobs:
+  macos:
+    strategy:
+      matrix:
+        runner: [macos-15, macos-15-intel]     # Apple silicon, Intel
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: PYTHON="$(which python)" packaging/build_macos.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Confidence-macOS-${{ runner.arch }}
+          path: dist/*.dmg
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: powershell -ExecutionPolicy Bypass -File packaging\build_windows.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Confidence-Windows
+          path: dist/*.zip

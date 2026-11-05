@@ -5,3 +5,11 @@ build/
 dist/
 .pytest_cache/
 .venv/
+.build-venv/
+packaging/icon/Confidence.icns
+.DS_Store
+src/dsan/clock/native/*.dylib
+src/dsan/clock/native/*.so
+src/dsan/_build.py
+# personal layouts saved in the project folder
+/RM Confidence monitor.json

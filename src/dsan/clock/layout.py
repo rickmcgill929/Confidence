@@ -15,6 +15,7 @@ from dataclasses import asdict, dataclass, field, fields
 from typing import Any, Dict, List, Optional
 
 from ..limitimer import LimitimerState, Program
+from ..millumin import MilluminView, format_time
 
 # Element types and what each one shows.
 ELEMENT_TYPES: Dict[str, str] = {
@@ -29,17 +30,18 @@ ELEMENT_TYPES: Dict[str, str] = {
 
 # Which per-type fields the editor should show (common fields are always shown).
 TYPE_FIELDS: Dict[str, List[str]] = {
-    "timer": ["source", "overtime", "follow_format", "phase_colors", "color", "font", "bold", "align"],
-    "lights": ["source", "orientation", "show_idle"],
-    "cue": ["cue_style", "hold"],
-    "progress": ["source", "phase_colors", "color"],
+    "timer": ["source", "mm_show", "overtime", "follow_format", "phase_colors", "follow_blink", "color", "font", "bold",
+              "align"],
+    "lights": ["source", "orientation", "show_idle", "follow_blink"],
+    "cue": ["cue_style", "hold", "frame_px"],
+    "progress": ["source", "bar_direction", "bar_fill", "phase_colors", "color"],
     "clock": ["clock_24h", "clock_seconds", "color", "font", "bold", "align"],
     "label": ["text", "source", "color", "font", "bold", "align"],
     "message": ["flash", "color", "font", "bold", "align"],
 }
 COMMON_FIELDS = ["name", "visible", "x", "y", "w", "h", "bg", "radius"]
 
-SOURCES = ["selected", "1", "2", "3", "4"]
+SOURCES = ["selected", "1", "2", "3", "4", "millumin"]
 NO_SIGNAL_MODES = ["dim", "text", "hide", "ignore"]
 
 
@@ -61,15 +63,21 @@ class Element:
     bold: bool = True
     align: str = "center"          # left | center | right
     # timer / lights / progress / label
-    source: str = "selected"       # "selected" follows the Limitimer, or "1".."4"
+    source: str = "selected"       # "selected" follows the Limitimer, "1".."4", or "millumin"
+    mm_show: str = "remaining"     # Millumin timer: remaining | elapsed | duration
     overtime: bool = True
     follow_format: bool = False
     phase_colors: bool = True      # colour by running / warning / expired
+    follow_blink: bool = False     # flash when the Limitimer's blink flag is set
     # lights
     orientation: str = "horizontal"
     show_idle: bool = False        # light green while stopped with time left
+    # progress bar
+    bar_direction: str = "ltr"     # ltr | rtl | btt | ttb — the edge the bar grows from
+    bar_fill: str = "auto"         # auto | remaining | elapsed
     # cue
-    cue_style: str = "arrows"      # arrows | light | text
+    cue_style: str = "arrows"      # arrows | light | text | frame
+    frame_px: int = 20             # frame style: outline width in output pixels
     hold: float = 1.5              # seconds a NEXT/PREV press stays on screen
     # clock
     clock_24h: bool = True
@@ -217,13 +225,50 @@ def phase(program: Optional[Program]) -> str:
     return "idle"
 
 
-def expand_tokens(text: str, state: Optional[LimitimerState], program: Optional[Program]) -> str:
-    """Label tokens: {program} → 'PROGRAM 2', {n} → '2', {mode} → 'COUNTDOWN' / 'COUNT UP'."""
+def millumin_phase(view: Optional[MilluminView], yellow: float = 30.0, red: float = 10.0) -> str:
+    """Lights / colours for a Millumin clip, like Millumin's own time script: green while
+    playing, yellow in the last ``yellow`` seconds, red in the last ``red`` seconds and when
+    frozen on the last frame. A looping clip stays green; paused / stopped are idle."""
+    if view is None:
+        return "idle"
+    if view.mode == "freeze":
+        return "expired"
+    if view.state != "playing":
+        return "idle"
+    rem = view.remaining
+    if view.mode != "loop" and rem is not None:
+        if rem <= red:
+            return "expired"
+        if rem <= yellow:
+            return "warning"
+    return "running"
+
+
+def millumin_tokens(view: Optional[MilluminView]) -> Dict[str, str]:
+    if view is None:                     # nothing on the layer: every token is empty
+        return {k: "" for k in ("clip", "layer", "column", "state", "playmode", "trt", "remaining", "elapsed")}
+    return {"clip": view.clip, "layer": view.layer, "column": view.column, "state": view.status,
+            "playmode": {"loop": "LOOP", "freeze": "FREEZE"}.get(view.mode, ""),
+            "trt": format_time(view.duration), "remaining": format_time(view.remaining, round_up=True),
+            "elapsed": format_time(view.elapsed)}
+
+
+def expand_tokens(text: str, state: Optional[LimitimerState], program: Optional[Program],
+                  millumin: Optional[MilluminView] = None) -> str:
+    """Label tokens: {program} → 'PROGRAM 2', {n} → '2', {mode} → 'COUNTDOWN' / 'COUNT UP'.
+
+    Millumin: {clip} {layer} {column} {trt} {remaining} {elapsed} {state} (PLAYING / PAUSED /
+    FREEZE) and {playmode} (LOOP / FREEZE / empty). All empty when nothing is on the layer.
+    """
     n = str(program.number) if program else "-"
     mode = "" if state is None else ("COUNTDOWN" if state.count_down else "COUNT UP")
-    return (text.replace("{program}", f"PROGRAM {n}")
+    text = (text.replace("{program}", f"PROGRAM {n}")
                 .replace("{n}", n)
                 .replace("{mode}", mode))
+    if "{" in text:
+        for k, v in millumin_tokens(millumin).items():
+            text = text.replace("{" + k + "}", v)
+    return text
 
 
 # -- presets ------------------------------------------------------------------------
@@ -263,6 +308,17 @@ def preset_cue_light() -> Layout:
     ])
 
 
+def preset_cue_frame() -> Layout:
+    """The timer with a frame round the whole screen that flashes green on NEXT, red on PREV."""
+    return Layout("Cue frame", "#000000", [
+        _e("label", 0.08, 0.10, 0.84, 0.09, text="{program}", color="#8A8A8A"),
+        _e("timer", 0.06, 0.20, 0.88, 0.50),
+        _e("lights", 0.36, 0.74, 0.28, 0.09),
+        _e("message", 0.10, 0.85, 0.80, 0.08, color="#FFFFFF", bg="#C00000FF", radius=0.15, flash=True),
+        _e("cue", 0.0, 0.0, 1.0, 1.0, cue_style="frame", frame_px=40, hold=1.5, name="Cue frame"),
+    ])
+
+
 def preset_timer_clock() -> Layout:
     """Side by side: the Limitimer and time of day, for a green room or FOH."""
     return Layout("Timer + time of day", "#000000", [
@@ -289,12 +345,27 @@ def preset_four_programs() -> Layout:
     return Layout("All four programs", "#000000", els)
 
 
+def preset_millumin() -> Layout:
+    """Millumin playback: clip name, a big countdown, TRT, a progress bar and the play state."""
+    return Layout("Millumin countdown", "#000000", [
+        _e("label", 0.05, 0.05, 0.70, 0.09, text="{clip}", color="#FFFFFF", align="left", name="Clip"),
+        _e("label", 0.75, 0.05, 0.20, 0.09, text="{trt}", color="#8A8A8A", align="right", name="TRT"),
+        _e("timer", 0.03, 0.17, 0.94, 0.48, source="millumin", mm_show="remaining", name="Remaining"),
+        _e("progress", 0.05, 0.69, 0.90, 0.035, source="millumin", bar_fill="elapsed", name="Progress"),
+        _e("label", 0.05, 0.76, 0.45, 0.08, text="{state}", color="#8A8A8A", align="left", name="State"),
+        _e("label", 0.50, 0.76, 0.45, 0.08, text="{playmode}", color="#FFB000", align="right", name="Loop / freeze"),
+        _e("message", 0.05, 0.87, 0.90, 0.10, color="#FFFFFF", bg="#C00000FF", radius=0.15, flash=True),
+    ])
+
+
 PRESETS = {
     "Confidence monitor": preset_confidence,
     "Corner overlay": preset_corner_overlay,
     "Cue light": preset_cue_light,
+    "Cue frame": preset_cue_frame,
     "Timer + time of day": preset_timer_clock,
     "All four programs": preset_four_programs,
+    "Millumin countdown": preset_millumin,
 }
 
 
@@ -314,5 +385,6 @@ def default_element(type_: str) -> Element:
 __all__ = [
     "COMMON_FIELDS", "DEFAULT_COLORS", "ELEMENT_TYPES", "Element", "Layout", "NO_SIGNAL_MODES",
     "PRESETS", "SOURCES", "TYPE_FIELDS", "default_element", "expand_tokens", "format_color",
+    "millumin_phase", "millumin_tokens",
     "parse_color", "phase", "resolve_program",
 ]
