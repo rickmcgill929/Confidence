@@ -330,7 +330,8 @@ That creates `dist/Confidence.app` and `dist/Confidence-<version>-macOS-<arch>.d
   - By default the app is signed ad hoc. It opens normally on the Mac that built it. On other Macs, right-click → **Open** the first time.
   - To share it without warnings, set `CODESIGN_IDENTITY="Developer ID Application: …"` and `NOTARY_PROFILE=<notarytool keychain profile>`. The script then signs with the hardened runtime, notarizes and staples the dmg.
 - **Windows:** run `powershell -ExecutionPolicy Bypass -File packaging\build_windows.ps1` → `dist\Confidence-<version>-Windows.zip`.
-- **GitHub:** `.github/workflows/build-clock.yml` builds all three (macOS arm64, macOS Intel, Windows) on a `v*` tag or by hand.
+- **Linux:** run `packaging/build_linux.sh` → `dist/Confidence-<version>-Linux-<arch>.tar.gz`. Unpack it and run `./install.sh` to add Confidence to the applications menu (or run `Confidence/Confidence` directly). Serial adapters need your user in the `dialout` group (`sudo usermod -aG dialout $USER`, then log out and in). Builds run on the glibc they were built on and newer; the GitHub build uses Ubuntu 22.04.
+- **GitHub:** `.github/workflows/build-clock.yml` builds all four (macOS Apple silicon, macOS Intel, Windows, Linux x86_64) on a `v*` tag or by hand. GitHub's builds have no DeckLink output (the SDK isn't there); build locally for SDI.
 - The packaged app and `confidence` share their settings (`TRUCUE / Confidence`), so switching between them keeps your ports and layouts. On first launch Confidence copies over anything an earlier version (TruTime or DSAN Viewer) had saved.
 
 ## Limitimer viewer (older single-window app)

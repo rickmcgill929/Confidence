@@ -6,6 +6,9 @@ Built apps also carry a build number (date and time of the build), shown in **Ab
 
 ## [Unreleased]
 
+### Added
+- Linux build: `packaging/build_linux.sh` makes `Confidence-<version>-Linux-<arch>.tar.gz` (app folder, icon, desktop entry, `install.sh`), and the GitHub workflow builds it on Ubuntu 22.04.
+
 ### Fixed
 - Millumin: the clip name no longer flashes on and off when advancing to a new column — a late *stoppedColumn* for the previous column, or a repeated *launchedColumn* for the current one, no longer clears it.
 

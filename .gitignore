@@ -6,6 +6,7 @@ dist/
 .pytest_cache/
 .venv/
 .build-venv/
+.build-venv-linux/
 packaging/icon/Confidence.icns
 .DS_Store
 src/dsan/clock/native/*.dylib
