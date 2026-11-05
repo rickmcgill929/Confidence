@@ -7,7 +7,10 @@ Built apps also carry a build number (date and time of the build), shown in **Ab
 ## [Unreleased]
 
 ### Fixed
-- Millumin: when the media on a layer stops (or its column is stopped) the layer is cleared instead of holding the last clip — Millumin timers go blank and `{clip}` `{trt}` `{state}`… empty until something starts on it again. Paused clips stay up.
+- Millumin: the clip name no longer flashes on and off when advancing to a new column — a late *stoppedColumn* for the previous column, or a repeated *launchedColumn* for the current one, no longer clears it.
+
+### Fixed
+- Millumin follows columns: a clip stays up (frozen where it stopped) until you launch the next column, then switches to what starts there — or blanks if that column has nothing on the layer. Stopping the column blanks it.
 
 ### Changed
 - **Renamed to Confidence** (was DSAN Viewer), with a new icon and logo: a countdown ring shaped like a C, running green → yellow → red (`packaging/brand/`). The app is `Confidence.app`, the disk image `Confidence-<version>-macOS-<arch>.dmg`, the launcher `Confidence.command`, the command `confidence` (`dsan-clock` still works), and new layouts go in Documents/Confidence. Settings move to `TRUCUE / Confidence`; anything saved by DSAN Viewer (or the short-lived TruTime build) is copied over on first launch. The Python library keeps its name, `dsan`.

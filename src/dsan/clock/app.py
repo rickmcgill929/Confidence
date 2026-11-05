@@ -1052,7 +1052,7 @@ class ControlWindow(QMainWindow):
         if not rx.tracker.received:
             self._status(self.mm_status, f"● Waiting for Millumin on port {rx.port}", "#FFB000")
         elif v is None:
-            self._status(self.mm_status, "● Connected — nothing playing on this layer", "#00E07A")
+            self._status(self.mm_status, "● Connected — nothing on this layer in this column", "#00E07A")
         elif not v.live:
             self._status(self.mm_status, "● No feedback from Millumin for a while", "#FFB000")
         else:

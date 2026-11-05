@@ -24,9 +24,13 @@ Millumin doesn't send a clip's loop mode, so it is worked out from the time feed
 * **loop** — the time jumps from the end of the clip back to the start while it plays;
 * **freeze** — the time reaches the end and stays there with no *mediaStopped*.
 
-When a layer's media stops (*mediaStopped*, or the column is stopped) the layer is
-empty: :meth:`MilluminTracker.view` returns None until something starts on it again,
-so nothing stale stays on screen.
+Columns decide what's on screen. While a column is current, a layer holds its clip:
+when the media stops, the clip name, duration and time stay up, frozen where it
+stopped (state "stopped"). Launching another column clears every layer, and what
+starts on the new column takes over; a layer with nothing on the new column is
+empty (:meth:`MilluminTracker.view` returns None). Stopping the column clears all.
+Media that started just before the *launchedColumn* message arrived belongs to the
+new column and is kept.
 
 Between time messages (and for layers that only send *mediaStarted*) the time runs
 on from the last known value, so a countdown keeps ticking smoothly.
@@ -62,6 +66,10 @@ class _Layer:
     fed: bool = False                 # time came from a time message (not just mediaStarted)
     moved: float = 0.0                # monotonic time the time last changed
     last_msg: float = 0.0
+    started: float = -1e9             # monotonic time of the last mediaStarted
+
+
+_NEW_COLUMN_GRACE = 0.5               # media started this close before a column launch belongs to it
 
 
 @dataclass(frozen=True)
@@ -71,7 +79,7 @@ class MilluminView:
     clip: str
     duration: Optional[float]
     elapsed: float
-    state: str                        # "playing" | "paused" (a stopped layer has no view)
+    state: str                        # "playing" | "paused" | "stopped" (held until the next column)
     mode: str                         # "loop" | "freeze" | ""
     loops: int
     column: str
@@ -90,7 +98,7 @@ class MilluminView:
 
     @property
     def status(self) -> str:
-        """PLAYING | PAUSED | FREEZE (frozen on the last frame)."""
+        """PLAYING | PAUSED | STOPPED | FREEZE (frozen on the last frame)."""
         return "FREEZE" if self.mode == "freeze" else self.state.upper()
 
 
@@ -117,6 +125,7 @@ class MilluminTracker:
         self._lock = threading.Lock()
         self.selected: Optional[str] = None
         self.column = ""
+        self.column_index: Optional[int] = None         # the launched column, if Millumin said
         self.last_message: float = 0.0
         self.received = 0
         self.unknown: List[Tuple[str, tuple]] = []      # last few unrecognised /millumin messages
@@ -152,13 +161,19 @@ class MilluminTracker:
     def _apply(self, path: str, args: tuple, now: float) -> bool:
         target, _, rest = path.partition("/")
         if target == "board":
+            index = int(args[0]) if args and _num(args[0]) is not None else None
+            name = str(args[1]) if len(args) > 1 else (f"Column {index}" if index is not None else "")
             if rest in ("launchedColumn", "columnLaunched"):
-                self.column = str(args[1]) if len(args) > 1 else (f"Column {args[0]}" if args else "")
+                repeat = index is not None and index == self.column_index and name == self.column
+                self.column, self.column_index = name, index
+                if not repeat:                             # new column: the old column's media goes
+                    self._clear_layers(now)
                 return True
             if rest in ("stoppedColumn", "columnStopped"):
-                self.column = ""
-                for lay in self._layers.values():
-                    self._clear(lay, now)
+                if index is not None and self.column_index is not None and index != self.column_index:
+                    return True                            # the previous column stopping after we advanced
+                self.column, self.column_index = "", None
+                self._clear_layers(now)
                 return True
             return False
         if target.startswith("index:") or target.startswith("light:"):
@@ -190,14 +205,21 @@ class MilluminTracker:
             if changed or lay.state != "paused":         # resuming the same clip keeps the time
                 lay.time, lay.fed = 0.0, False
             lay.state = "playing"
-            lay.sampled = lay.moved = now
+            lay.sampled = lay.moved = lay.started = now
             return True
         if rest == "mediaPaused":
             lay.time = self._elapsed(lay, now)
             lay.state, lay.sampled = "paused", now
             return True
         if rest == "mediaStopped":
-            self._clear(lay, now)
+            name = str(args[1]) if len(args) > 1 else None
+            if name is not None and lay.clip and name != lay.clip:
+                return True                              # a late stop for media already replaced
+            if lay.clip:                                 # hold it, frozen where it stopped
+                lay.time = self._elapsed(lay, now)
+                lay.state, lay.fed, lay.sampled = "stopped", False, now
+            else:
+                self._clear(lay, now)
             return True
         if rest == "media/time":
             t = _num(args[0]) if args else None
@@ -234,6 +256,12 @@ class MilluminTracker:
                 lay.state = "playing"                    # the time is moving: there's media on the layer
         lay.time, lay.sampled, lay.fed = t, now, True
 
+    def _clear_layers(self, now: float) -> None:
+        """Clear every layer, except media that started a moment ago (it belongs to the new column)."""
+        for lay in self._layers.values():
+            if now - lay.started > _NEW_COLUMN_GRACE:
+                self._clear(lay, now)
+
     @staticmethod
     def _clear(lay: _Layer, now: float) -> None:
         """Nothing on this layer any more."""
@@ -258,14 +286,14 @@ class MilluminTracker:
             return sorted(n for n in self._layers if n != "(selected layer)")
 
     def view(self, layer: str = SELECTED, now: Optional[float] = None) -> Optional[MilluminView]:
-        """The named layer, or the selected one (SELECTED). None when nothing is playing or paused on it."""
+        """The named layer, or the selected one (SELECTED). None when the current column has nothing on it."""
         now = time.monotonic() if now is None else now
         with self._lock:
             name = layer or self.selected or "(selected layer)"
             lay = self._layers.get(name)
             if lay is None and not layer and len(self._layers) == 1:
                 lay = next(iter(self._layers.values()))   # one layer in use: follow it
-            if lay is None or lay.state == "stopped":
+            if lay is None or (lay.state == "stopped" and not lay.clip):
                 return None
             elapsed = self._elapsed(lay, now)
             mode = "loop" if lay.looping else ""

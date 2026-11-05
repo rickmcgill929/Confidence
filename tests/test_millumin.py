@@ -32,9 +32,9 @@ def test_selected_layer_countdown_and_states():
     assert t.view(now=21).elapsed == pytest.approx(31.0)
     assert t.view(now=21.5).live and not t.view(now=40).live
     t.handle("/millumin/layer:Video/mediaStopped", 2, "intro.mov", now=22)
-    assert t.view(now=30) is None                         # stopped: nothing on the layer, nothing shown
-    t.handle("/millumin/selectedLayer/media/time", 0.0, 90.0, now=23)    # stray time feed doesn't bring it back
-    assert t.view(now=23) is None
+    v = t.view(now=30)                                    # held on the current column, frozen where it stopped
+    assert v.clip == "intro.mov" and v.status == "STOPPED" and v.elapsed == pytest.approx(32.0)
+    assert t.view(now=60).remaining == pytest.approx(58.0)
     assert t.layers() == ["Video"]
     t.handle("/millumin/layer:Video/mediaStarted", 2, "outro.mov", 45.0, now=24)
     v = t.view(now=24)
@@ -90,8 +90,8 @@ def test_named_layer_columns_and_unknown():
     t.handle("/millumin/selectedLayer/media/normalizedTime", 0.5, now=1)       # no duration known → ignored
     t.handle("/millumin/selectedLayer/media/speed", 2.0, now=1)
     assert t.view("A", now=2).column == "Walk-in"
-    t.handle("/millumin/board/stoppedColumn", 4, "Walk-in", now=2)
-    assert t.view("A", now=2) is None and t.view("B", now=2) is None    # column stopped clears every layer
+    t.handle("/millumin/board/stoppedColumn", 4, "Walk-in", now=3)
+    assert t.view("A", now=3) is None and t.view("B", now=3) is None    # column stopped clears every layer
     assert not t.handle("/millumin/layer:A/somethingNew", 1, now=2)
     assert t.unknown[-1] == ("/millumin/layer:A/somethingNew", (1,))
 
@@ -214,3 +214,66 @@ def test_app_millumin_box(qapp, monkeypatch):
     assert w2.mm_enable.isChecked() and w2.mm_layer_name() == "Logo" and w2.mm_port.value() == port
     w2.close()
     QSettings("TRUCUE", "DSANClockMM").clear()
+
+
+def test_columns_hold_and_switch():
+    t = MilluminTracker()
+    t.handle("/millumin/layer:Main/selected", now=0)
+    t.handle("/millumin/board/launchedColumn", 1, "Walk-in", now=0)
+    t.handle("/millumin/layer:Main/mediaStarted", 1, "walkin.mov", 20.0, now=0)
+    t.handle("/millumin/layer:Main/mediaStopped", 1, "walkin.mov", now=20)          # played out
+    v = t.view(now=100)
+    assert v.clip == "walkin.mov" and v.remaining == 0 and v.status == "STOPPED"     # held at 0:00
+
+    # advance: the new clip's mediaStarted can arrive just before launchedColumn — it must survive
+    t.handle("/millumin/layer:Main/mediaStarted", 1, "keynote.mov", 600.0, now=200)
+    t.handle("/millumin/board/launchedColumn", 2, "Keynote", now=200.05)
+    t.handle("/millumin/layer:Main/mediaStopped", 1, "walkin.mov", now=200.1)       # late stop for the old clip
+    v = t.view(now=210)
+    assert v.clip == "keynote.mov" and v.status == "PLAYING" and v.column == "Keynote"
+    assert v.elapsed == pytest.approx(10.0)
+
+    # a column with nothing on this layer blanks it
+    t.handle("/millumin/board/launchedColumn", 3, "Break", now=300)
+    t.handle("/millumin/layer:Main/mediaStopped", 1, "keynote.mov", now=300.02)
+    assert t.view(now=301) is None
+    from dsan.clock.layout import expand_tokens
+    assert expand_tokens("{clip}{trt}{state}", None, None, t.view(now=301)) == ""
+
+    # and the next column brings it back
+    t.handle("/millumin/board/launchedColumn", 4, "Q&A", now=400)
+    t.handle("/millumin/layer:Main/mediaStarted", 1, "qa.mov", 30.0, now=400.1)
+    assert t.view(now=401).clip == "qa.mov"
+
+
+def test_advance_with_late_stop_of_previous_column():
+    """Millumin can send stoppedColumn for the old column after launching the new one."""
+    t = MilluminTracker()
+    t.handle("/millumin/layer:Main/selected", now=0)
+    t.handle("/millumin/board/launchedColumn", 1, "Walk-in", now=0)
+    t.handle("/millumin/layer:Main/mediaStarted", 1, "walkin.mov", 20.0, now=0)
+    # advance to column 2, in the order Millumin can send it
+    t.handle("/millumin/board/launchedColumn", 2, "Keynote", now=50)
+    t.handle("/millumin/layer:Main/mediaStopped", 1, "walkin.mov", now=50.01)
+    t.handle("/millumin/layer:Main/mediaStarted", 1, "keynote.mov", 600.0, now=50.02)
+    t.handle("/millumin/board/stoppedColumn", 1, "Walk-in", now=50.03)            # old column stops late
+    for now in (50.05, 51, 55):
+        v = t.view(now=now)
+        assert v is not None and v.clip == "keynote.mov" and v.column == "Keynote", now
+    # a repeated launchedColumn for the current column doesn't blank the playing clip
+    t.handle("/millumin/board/launchedColumn", 2, "Keynote", now=60)
+    assert t.view(now=61).clip == "keynote.mov"
+    # stopping the current column does blank it
+    t.handle("/millumin/board/stoppedColumn", 2, "Keynote", now=70)
+    assert t.view(now=71) is None
+
+
+def test_stopped_column_before_launch_keeps_new_media():
+    t = MilluminTracker()
+    t.handle("/millumin/layer:Main/selected", now=0)
+    t.handle("/millumin/board/launchedColumn", 1, "A", now=0)
+    t.handle("/millumin/layer:Main/mediaStarted", 1, "a.mov", 20.0, now=0)
+    t.handle("/millumin/layer:Main/mediaStarted", 1, "b.mov", 30.0, now=10)
+    t.handle("/millumin/board/stoppedColumn", 1, "A", now=10.01)
+    t.handle("/millumin/board/launchedColumn", 2, "B", now=10.02)
+    assert t.view(now=11).clip == "b.mov"

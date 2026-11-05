@@ -245,7 +245,7 @@ def millumin_phase(view: Optional[MilluminView], yellow: float = 30.0, red: floa
 
 
 def millumin_tokens(view: Optional[MilluminView]) -> Dict[str, str]:
-    if view is None:                     # nothing on the layer: every token is empty
+    if view is None:                     # nothing on the layer in this column: every token is empty
         return {k: "" for k in ("clip", "layer", "column", "state", "playmode", "trt", "remaining", "elapsed")}
     return {"clip": view.clip, "layer": view.layer, "column": view.column, "state": view.status,
             "playmode": {"loop": "LOOP", "freeze": "FREEZE"}.get(view.mode, ""),
@@ -258,7 +258,8 @@ def expand_tokens(text: str, state: Optional[LimitimerState], program: Optional[
     """Label tokens: {program} → 'PROGRAM 2', {n} → '2', {mode} → 'COUNTDOWN' / 'COUNT UP'.
 
     Millumin: {clip} {layer} {column} {trt} {remaining} {elapsed} {state} (PLAYING / PAUSED /
-    FREEZE) and {playmode} (LOOP / FREEZE / empty). All empty when nothing is on the layer.
+    STOPPED / FREEZE) and {playmode} (LOOP / FREEZE / empty). All empty when the current
+    column has nothing on the layer.
     """
     n = str(program.number) if program else "-"
     mode = "" if state is None else ("COUNTDOWN" if state.count_down else "COUNT UP")

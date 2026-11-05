@@ -199,8 +199,8 @@ Confidence can show what [Millumin](https://www.millumin.com) is playing. Tick *
 
 - **Layer:** follow Millumin's selected layer, or pick or type a layer name.
 - **Timers, progress bars and phase lights** get a *Millumin* source. A Millumin timer shows the time remaining (counting down), the elapsed time or the duration (TRT). Colours follow Millumin's own time script: green while playing, yellow in the last 30 s, red in the last 10 s and when frozen on the last frame. Both thresholds are set in the MILLUMIN box.
-- **Label tokens:** `{clip}` `{layer}` `{column}` `{trt}` `{remaining}` `{elapsed}` `{state}` (PLAYING · PAUSED · FREEZE) `{playmode}` (LOOP · FREEZE · empty).
-- **When the media stops** (or its column is stopped), the layer is cleared: Millumin timers go blank and the tokens empty, until something starts on that layer again. Paused clips stay up.
+- **Label tokens:** `{clip}` `{layer}` `{column}` `{trt}` `{remaining}` `{elapsed}` `{state}` (PLAYING · PAUSED · STOPPED · FREEZE) `{playmode}` (LOOP · FREEZE · empty).
+- **Columns decide what's shown.** While a column is current, its clip stays up even after the media stops, frozen where it stopped (a clip that plays out holds at 0:00). Launching the next column switches to what starts there; if that column has nothing on your layer, Millumin elements go blank. Stopping the column blanks them too.
 - **Loop and freeze** aren't in Millumin's OSC feedback, so they're worked out from the time: a jump from the end back to the start is a loop; sitting on the end without a *mediaStopped* is a freeze.
 - Millumin sends the running time only for the **selected** layer. For other layers the time runs on from *mediaStarted*.
 - The debug console (⌘D) logs every Millumin message, flagging any that aren't used; the many-per-second time updates show only with *Raw bytes* on.
