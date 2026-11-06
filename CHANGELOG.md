@@ -6,6 +6,11 @@ Built apps also carry a build number (date and time of the build), shown in **Ab
 
 ## [Unreleased]
 
+## [0.7.1] — 2026-11-06
+
+### Added
+- **Remote control from a web browser.** Turn it on in the new REMOTE box (port, optional PIN) and open the address it shows on a phone, tablet or computer on the same network: live preview of the output, presenter messages, presets and saved layouts, output mode/display/show-hide, adapter choice and connect/disconnect, Demo, and the Millumin, TruCue and OSC settings. Self-contained page, no internet needed.
+
 ## [0.7.0] — 2026-11-05
 
 ### Added

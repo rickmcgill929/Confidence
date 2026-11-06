@@ -15,7 +15,7 @@ Layers, use whichever you need:
 * ``dsan`` command — ``dsan serve``, ``dsan monitor``, ``dsan send``, ``dsan ports``
 * ``confidence`` — Confidence, the show-clock app for a Limitimer, Perfect Cue and Millumin (``pip install dsan[clock]``)
 """
-__version__ = "0.7.0"
+__version__ = "0.7.1"
 
 from .limitimer import BeepType, Decoder, LimitimerState, PacketEvent, Program
 from .perfectcue import Button, Command

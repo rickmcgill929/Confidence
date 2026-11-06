@@ -345,6 +345,14 @@ That creates `dist/Confidence.app` and `dist/Confidence-<version>-macOS-<arch>.d
 - **GitHub:** `.github/workflows/build-clock.yml` builds all four (macOS Apple silicon, macOS Intel, Windows, Linux x86_64) on a `v*` tag or by hand. GitHub's builds have no DeckLink output (the SDK isn't there); build locally for SDI.
 - The packaged app and `confidence` share their settings (`TRUCUE / Confidence`), so switching between them keeps your ports and layouts. On first launch Confidence copies over anything an earlier version (TruTime or DSAN Viewer) had saved.
 
+### Remote control from a browser
+
+Tick **Allow control from a web browser** in the REMOTE box (default port 8080) and open the address it shows — e.g. `http://192.168.1.20:8080` — on a phone, tablet or another computer on the same network. No app or internet needed.
+
+The page shows a **live preview** of the output (about once a second) and lets you send and clear **presenter messages** (with the quick WRAP UP / 1 MINUTE / PLEASE STOP buttons), load a **preset or a saved layout** (from the layouts folder), set the **output** mode and display and show/hide it, pick each device's **adapter** and connect/disconnect it, switch **Demo** on/off, and set up the **Millumin, TruCue and OSC** feeds. Editing a layout's elements stays in the app.
+
+Set a **PIN** on any network you don't control: the page asks for it once and remembers it in that browser. Without one, anyone on the network who finds the page can use it. The page works over plain HTTP on your local network — don't expose the port to the internet.
+
 ### Updates and releases
 
 **On a Mac (signed release builds)** Confidence updates itself with [Sparkle](https://sparkle-project.org): **Confidence → Check for Updates…** shows what's new and **Install Update** downloads it, checks its signature and installs it on relaunch. It downloads a **delta** — only what changed since your version, usually a few MB instead of the whole app — when there is one. Automatic checks run daily (**Check for Updates Automatically** in the Help menu).

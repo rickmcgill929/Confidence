@@ -427,6 +427,7 @@ class ControlWindow(QMainWindow):
         self.osc_in = None
         self.mm_rx = None
         self.tc_rx = None
+        self.remote = None
         self._detecting = False
         self._port_infos: Dict[str, portsmod.PortInfo] = {}
         self.refs: Dict[str, Optional[portsmod.PortRef]] = {"lt": None, "pc": None}
@@ -464,6 +465,8 @@ class ControlWindow(QMainWindow):
         self._ticks += 1
         self._update_millumin()
         self._update_trucue()
+        if self._ticks % 5 == 0:
+            self._update_remote()
         self.decklink_panel.update_status()
         if self._ticks % 2 == 0 and not self._detecting:
             self._refresh_ports()
@@ -642,6 +645,7 @@ class ControlWindow(QMainWindow):
         lv.addWidget(self._build_osc())
         lv.addWidget(self._build_millumin())
         lv.addWidget(self._build_trucue())
+        lv.addWidget(self._build_remote())
         lv.addStretch()
         scroll = QScrollArea()
         scroll.setWidget(left)
@@ -993,6 +997,66 @@ class ControlWindow(QMainWindow):
         self.sig.osc_press.connect(lambda b: self._on_pc_button(b, test=True))
         self.sig.osc_message.connect(self._on_osc_message)
         return g
+
+    def _build_remote(self) -> QGroupBox:
+        g = QGroupBox("REMOTE")
+        form = QFormLayout(g)
+        self.remote_enable = QCheckBox("Allow control from a web browser")
+        self.remote_enable.setToolTip("Serve a web page for configuring Confidence from a phone, tablet or another "
+                                      "computer on this network: preview, messages, layouts, output, inputs, feeds.")
+        self.remote_enable.toggled.connect(self._rebuild_remote)
+        self.remote_port = QSpinBox()
+        self.remote_port.setRange(1024, 65535)
+        self.remote_port.setValue(8080)
+        self.remote_pin = QLineEdit()
+        self.remote_pin.setPlaceholderText("optional — recommended on shared networks")
+        self.remote_pin.setMaxLength(32)
+        self.remote_pin.setToolTip("Anyone opening the page must enter this first")
+        self.remote_pin.editingFinished.connect(self._remote_pin_changed)
+        self.remote_status = QLabel()
+        self.remote_status.setWordWrap(True)
+        self.remote_status.setOpenExternalLinks(True)
+        self.remote_status.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
+        form.addRow(self.remote_enable)
+        form.addRow("Port", self.remote_port)
+        form.addRow("PIN", self.remote_pin)
+        form.addRow(self.remote_status)
+        return g
+
+    def _rebuild_remote(self, *_):
+        if self.remote:
+            self.remote.close()
+            self.remote = None
+        on = self.remote_enable.isChecked()
+        self.remote_port.setEnabled(not on)
+        if not on:
+            self.remote_status.setText("")
+            return
+        from .remote import RemoteServer
+        port = self.remote_port.value()
+        try:
+            self.remote = RemoteServer(self, port, pin=self.remote_pin.text().strip())
+        except OSError as e:
+            self.remote_enable.setChecked(False)
+            self._status(self.remote_status, f"Can't use port {port}: {e.strerror or e} — pick another", "#FF3B3B")
+            return
+        self._update_remote()
+
+    def _remote_pin_changed(self):
+        if self.remote:
+            self.remote.pin = self.remote_pin.text().strip()
+            self._update_remote()
+
+    def _update_remote(self):
+        r = self.remote
+        if r is None:
+            return
+        links = "<br>".join(f'<a href="{u}" style="color:#4A8CFF">{u}</a>' for u in r.urls()[:3])
+        lock = "PIN required" if r.pin else "<span style='color:#FFB000'>no PIN — anyone on this network can use it</span>"
+        seen = f" · {r.requests} requests" if r.requests else ""
+        self.remote_status.setStyleSheet("")
+        self.remote_status.setText(f"<span style='color:#00E07A'>●</span> Open on a phone or computer on this network:"
+                                   f"<br>{links}<br><span style='color:#8A8A8A'>{lock}{seen}</span>")
 
     def _build_trucue(self) -> QGroupBox:
         g = QGroupBox("TRUCUE")
@@ -2210,6 +2274,10 @@ class ControlWindow(QMainWindow):
         self.tc_red.setValue(s.value("trucue/red", 10, type=int))
         if OSC_AVAILABLE and s.value("trucue/enabled", False, type=bool):
             self.tc_enable.setChecked(True)
+        self.remote_port.setValue(s.value("remote/port", 8080, type=int))
+        self.remote_pin.setText(s.value("remote/pin", "", type=str))
+        if s.value("remote/enabled", False, type=bool):
+            self.remote_enable.setChecked(True)
         if OSC_AVAILABLE and s.value("osc/in_enabled", False, type=bool):
             self.osc_in_enable.setChecked(True)
         if s.value("output/visible", True, type=bool):
@@ -2342,6 +2410,9 @@ class ControlWindow(QMainWindow):
         s.setValue("trucue/yellow", self.tc_yellow.value())
         s.setValue("trucue/red", self.tc_red.value())
         s.setValue("trucue/enabled", self.tc_enable.isChecked())
+        s.setValue("remote/port", self.remote_port.value())
+        s.setValue("remote/pin", self.remote_pin.text().strip())
+        s.setValue("remote/enabled", self.remote_enable.isChecked())
         s.setValue("osc/in_enabled", self.osc_in_enable.isChecked())
         self.decklink_panel.save(s)
         self._autosave_layout()
@@ -2358,6 +2429,9 @@ class ControlWindow(QMainWindow):
         if self.tc_rx:
             self.tc_rx.close()
             self.tc_rx = None
+        if self.remote:
+            self.remote.close()
+            self.remote = None
         if self.osc_in:
             self.osc_in.close()
             self.osc_in = None
