@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import platform
 import re
+import ssl
 import sys
 import urllib.error
 import urllib.request
@@ -101,6 +102,20 @@ def from_release(data: dict, current: str = __version__, key: Optional[str] = No
                       assets=assets, asset=mine)
 
 
+def ssl_context() -> ssl.SSLContext:
+    """Verify GitHub with certifi's certificate list when it's installed.
+
+    python.org's Python on macOS, and apps packaged from it, don't use the Mac's
+    trusted certificates, so the default context fails with CERTIFICATE_VERIFY_FAILED.
+    certifi ships Mozilla's list with the app; without it, use the system default.
+    """
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except (ImportError, OSError):
+        return ssl.create_default_context()
+
+
 def fetch_latest(repo: str = REPO, timeout: float = TIMEOUT) -> dict:
     req = urllib.request.Request(API.format(repo=repo), headers={
         "Accept": "application/vnd.github+json",
@@ -108,7 +123,7 @@ def fetch_latest(repo: str = REPO, timeout: float = TIMEOUT) -> dict:
         "X-GitHub-Api-Version": "2022-11-28",
     })
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
+        with urllib.request.urlopen(req, timeout=timeout, context=ssl_context()) as r:
             return json.load(r)
     except urllib.error.HTTPError as e:
         if e.code == 404:
@@ -118,6 +133,9 @@ def fetch_latest(repo: str = REPO, timeout: float = TIMEOUT) -> dict:
         raise UpdateError(f"GitHub answered {e.code}.") from None
     except (urllib.error.URLError, TimeoutError, OSError) as e:
         reason = getattr(e, "reason", e)
+        if isinstance(reason, ssl.SSLError) or isinstance(e, ssl.SSLError):
+            raise UpdateError("Couldn't make a secure connection to GitHub (the certificate couldn't be "
+                              "verified). A network filter or proxy may be in the way.") from None
         raise UpdateError(f"Couldn't reach GitHub ({reason}). Are you online?") from None
     except ValueError:
         raise UpdateError("GitHub sent something unexpected.") from None

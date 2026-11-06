@@ -31,6 +31,7 @@ hiddenimports = (
     + ["dsan.osc", "dsan.sim"]
     # imported lazily at runtime, so PyInstaller can't see them:
     + collect_submodules("serial")            # serial_for_url loads socket:// etc. handlers by name
+    + ["dsan.updates", "certifi"]                # update check (certifi's cacert.pem comes with its hook)
     + ["pythonosc.udp_client", "pythonosc.osc_bundle_builder", "pythonosc.osc_message_builder",
        "pythonosc.dispatcher", "pythonosc.osc_server"]
 )

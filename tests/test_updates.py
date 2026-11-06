@@ -63,17 +63,18 @@ class _Resp(io.BytesIO):
 def test_fetch_and_errors(monkeypatch):
     seen = {}
 
-    def ok(req, timeout):
-        seen["url"], seen["ua"] = req.full_url, req.get_header("User-agent")
+    def ok(req, timeout, context=None):
+        seen["url"], seen["ua"], seen["ctx"] = req.full_url, req.get_header("User-agent"), context
         return _Resp(json.dumps(RELEASE).encode())
     monkeypatch.setattr(updates.urllib.request, "urlopen", ok)
     info = updates.check(current="0.4.0")
     assert info.available
     assert seen["url"] == "https://api.github.com/repos/rickmcgill929/Confidence/releases/latest"
     assert seen["ua"] == f"Confidence/{dsan.__version__}"                 # no personal details sent
+    assert seen["ctx"] is not None and seen["ctx"].verify_mode.name == "CERT_REQUIRED"
 
     def http(code):
-        def f(req, timeout):
+        def f(req, timeout, context=None):
             raise urllib.error.HTTPError(req.full_url, code, "x", {}, None)
         return f
     monkeypatch.setattr(updates.urllib.request, "urlopen", http(404))
@@ -83,11 +84,27 @@ def test_fetch_and_errors(monkeypatch):
     with pytest.raises(updates.UpdateError, match="limiting"):
         updates.check()
 
-    def offline(req, timeout):
+    def offline(req, timeout, context=None):
         raise urllib.error.URLError("nodename nor servname provided")
     monkeypatch.setattr(updates.urllib.request, "urlopen", offline)
     with pytest.raises(updates.UpdateError, match="online"):
         updates.check()
+
+    import ssl
+
+    def bad_cert(req, timeout, context=None):
+        raise urllib.error.URLError(ssl.SSLCertVerificationError(1, "certificate verify failed"))
+    monkeypatch.setattr(updates.urllib.request, "urlopen", bad_cert)
+    with pytest.raises(updates.UpdateError, match="secure connection"):
+        updates.check()
+
+
+def test_ssl_context_uses_certifi():
+    certifi = pytest.importorskip("certifi")
+    ctx = updates.ssl_context()
+    assert ctx.verify_mode.name == "CERT_REQUIRED" and ctx.check_hostname
+    assert ctx.cert_store_stats()["x509_ca"] > 50                         # loaded certifi's bundle
+    assert certifi.where().endswith("cacert.pem")
 
 
 @pytest.fixture(scope="module")

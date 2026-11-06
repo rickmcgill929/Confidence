@@ -6,6 +6,11 @@ Built apps also carry a build number (date and time of the build), shown in **Ab
 
 ## [Unreleased]
 
+## [0.5.1] — 2026-11-05
+
+### Fixed
+- Check for Updates failed with CERTIFICATE_VERIFY_FAILED on Macs (python.org Python and apps built from it don't use the Mac's certificates). The app now carries its own certificate list (`certifi`), and a certificate problem is reported as such rather than as "Are you online?".
+
 ## [0.5.0] — 2026-11-05
 
 ### Added
