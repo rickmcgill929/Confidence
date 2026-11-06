@@ -79,6 +79,10 @@ class DebugTap:
         """An OSC message received from Millumin (logged as an MM line)."""
         self._put("mm-osc", (address, args, used))
 
+    def trucue(self, address: str, args: tuple, used: bool) -> None:
+        """An OSC message received from TruCue (logged as a TC line)."""
+        self._put("tc-osc", (address, args, used))
+
     def drain(self) -> List[Tuple[float, str, object]]:
         with self._lock:
             out = list(self._q)
@@ -186,6 +190,8 @@ class DebugWindow(QWidget):
         self.f_lt = box("Limitimer", True, "Show Limitimer lines")
         self.f_pc = box("Perfect Cue", True, "Show Perfect Cue lines")
         self.f_mm = box("Millumin", True, "Show OSC received from Millumin (time updates only with Raw bytes on)")
+        self.f_tc = box("TruCue", True, "Show TruCue feedback: clip changes, play/pause and playlists "
+                                        "(every status message with Raw bytes on)")
         bar.addSpacing(10)
         self.f_raw = box("Raw bytes", False, "Every chunk read from the serial port, in hex")
         self.f_pkt = box("Packets", True, "Every framed Limitimer packet: type, size, CRC result")
@@ -213,7 +219,7 @@ class DebugWindow(QWidget):
         self.rec_btn.clicked.connect(self._toggle_record)
         bar.addWidget(self.rec_btn)
         v.addLayout(bar)
-        for c in (self.f_lt, self.f_pc, self.f_mm, self.f_raw, self.f_pkt, self.f_ping, self.f_state, self.f_changes):
+        for c in (self.f_lt, self.f_pc, self.f_mm, self.f_tc, self.f_raw, self.f_pkt, self.f_ping, self.f_state, self.f_changes):
             c.toggled.connect(self._save_settings)
 
         split = QSplitter()
@@ -341,6 +347,22 @@ class DebugWindow(QWidget):
                 else:
                     out.append(f"{ts}  PC  ???    0x{b:02X} — not a Perfect Cue button byte "
                                "(A/B swapped or on the wrong pins, or not the Perfect Cue port?)")
+        elif kind == "tc-osc":
+            if not self.f_tc.isChecked():
+                return out
+            address, args, used = obj
+            text = args[0] if args and isinstance(args[0], str) else " ".join(map(str, args))
+            if address.lower() == "/trucue/status":
+                try:
+                    import json
+                    d = json.loads(text)
+                    key = (d.get("clip"), d.get("index"), d.get("playing"))
+                except (ValueError, AttributeError):
+                    key = None
+                if key == getattr(self, "_tc_last", None) and not self.f_raw.isChecked():
+                    return out                        # ~10 a second: only changes, unless Raw bytes is on
+                self._tc_last = key
+            out.append(f"{ts}  TC  OSC    {address} {text}" + ("" if used else "   (not used)"))
         elif kind == "mm-osc":
             if not self.f_mm.isChecked():
                 return out
@@ -516,7 +538,7 @@ class DebugWindow(QWidget):
 
     # ── settings ──────────────────────────────────────────────────────────────
 
-    _KEYS = ("f_lt", "f_pc", "f_mm", "f_raw", "f_pkt", "f_ping", "f_state", "f_changes")
+    _KEYS = ("f_lt", "f_pc", "f_mm", "f_tc", "f_raw", "f_pkt", "f_ping", "f_state", "f_changes")
 
     def _load(self):
         if not self.settings:

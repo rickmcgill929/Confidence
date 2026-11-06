@@ -6,6 +6,11 @@ Built apps also carry a build number (date and time of the build), shown in **Ab
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-11-05
+
+### Added
+- **TruCue feedback.** A TRUCUE box receives TruCue's status feed (Settings → OSC → Companion feedback): clip, countdown to OUT, play state, loop / auto mode, next and previous clip, next bookmark and its countdown, volume. Timers, progress bars and lights get a *TruCue* source (a timer can show the bookmark countdown); labels get `{tc_clip}` `{tc_remaining}` `{tc_bookmark}`…; new *TruCue countdown* preset. **Forward to** passes the feed on so Companion's TruCue module keeps working. Library: `dsan.trucue`.
+
 ## [0.5.1] — 2026-11-05
 
 ### Fixed

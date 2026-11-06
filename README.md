@@ -207,7 +207,18 @@ Confidence can show what [Millumin](https://www.millumin.com) is playing. Tick *
 
 In Python: `dsan.millumin.MilluminReceiver(5001).tracker.view()` gives clip, duration, elapsed, remaining, state and loop/freeze for the selected layer, or pass a layer name to `view()`.
 
-## Confidence: show clock for Limitimer, Perfect Cue and Millumin
+### TruCue feedback
+
+Confidence can show what [TRUCUE](https://trucue.io) is playing. Tick **Receive TruCue feedback** in the TRUCUE box (default port 9017), then in TruCue go to **Settings → OSC**, turn on **Companion feedback** and set its host to the Confidence computer (127.0.0.1 if both run on the same Mac) and the same port.
+
+- **Timers, progress bars and phase lights** get a *TruCue* source. A TruCue timer shows the countdown to OUT, the elapsed time, the duration or the **countdown to the next bookmark**. Colours: green while playing, yellow and red in the last seconds (set in the TRUCUE box), and a looping clip stays green.
+- **Label tokens:** `{tc_clip}` `{tc_index}` `{tc_next}` `{tc_prev}` `{tc_remaining}` `{tc_elapsed}` `{tc_trt}` `{tc_state}` (PLAYING · PAUSED) `{tc_playmode}` (LOOP · AUTO NEXT · AUTO FIRST) `{tc_bookmark}` `{tc_bookmark_remaining}` `{tc_volume}`. TruCue's mode marks (🔁 → ↺ B) are taken off clip names. Everything is empty when no clip is loaded.
+- **Preset:** *TruCue countdown* — clip, mode, big countdown, progress, next bookmark and its countdown, next clip.
+- **Using Companion too:** TruCue sends its feedback to one place. Point TruCue at Confidence, set Companion's TruCue module to listen on another port (e.g. 9018), and put `127.0.0.1:9018` in **Forward to** — Confidence passes every message on unchanged.
+- TruCue doesn't send a clip's length, so duration (TRT, progress bars) is estimated from the countdown — exact when the clip was loaded from the top.
+- The debug console (⌘D) logs TruCue messages as `TC OSC` lines (only changes, or every message with *Raw bytes* on).
+
+## Confidence: show clock for Limitimer, Perfect Cue, Millumin and TruCue
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="packaging/brand/confidence-logo.svg">
@@ -271,7 +282,7 @@ If the debug console shows bytes that aren't button codes (Perfect Cue) or **Dev
 **Layouts**
 - Elements: timer digits, phase lights, Perfect Cue indicator (◁ ● ▷ arrows, full-screen colour light, an outline frame whose width you set in output pixels, or text — green for NEXT, red for PREV, yellow while blanked), progress bar, time of day, labels (`{program}`, `{mode}` tokens) and an operator message.
 - Every element has its own colours, background with alpha, corner radius, font and alignment. Timers follow the Limitimer's selected program or a fixed program, and overtime and DIP 2/3 format are set per element.
-- Presets: *Confidence monitor*, *Corner overlay*, *Cue light*, *Cue frame* (a frame round the whole screen), *Timer + time of day*, *All four programs*, *Millumin countdown*.
+- Presets: *Confidence monitor*, *Corner overlay*, *Cue light*, *Cue frame* (a frame round the whole screen), *Timer + time of day*, *All four programs*, *Millumin countdown*, *TruCue countdown*.
 - Layouts save as JSON. Custom `.ttf`/`.otf` fonts can be bundled with a layout.
 - Digits are drawn in fixed-width cells, so a running clock never shifts sideways, whatever the font.
 

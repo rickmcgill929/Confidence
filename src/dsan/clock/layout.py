@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Optional
 
 from ..limitimer import LimitimerState, Program
 from ..millumin import MilluminView, format_time
+from ..trucue import TruCueView
 
 # Element types and what each one shows.
 ELEMENT_TYPES: Dict[str, str] = {
@@ -41,7 +42,8 @@ TYPE_FIELDS: Dict[str, List[str]] = {
 }
 COMMON_FIELDS = ["name", "visible", "x", "y", "w", "h", "bg", "radius"]
 
-SOURCES = ["selected", "1", "2", "3", "4", "millumin"]
+SOURCES = ["selected", "1", "2", "3", "4", "millumin", "trucue"]
+MEDIA_SOURCES = ("millumin", "trucue")
 NO_SIGNAL_MODES = ["dim", "text", "hide", "ignore"]
 
 
@@ -63,8 +65,8 @@ class Element:
     bold: bool = True
     align: str = "center"          # left | center | right
     # timer / lights / progress / label
-    source: str = "selected"       # "selected" follows the Limitimer, "1".."4", or "millumin"
-    mm_show: str = "remaining"     # Millumin timer: remaining | elapsed | duration
+    source: str = "selected"       # "selected" follows the Limitimer, "1".."4", "millumin" or "trucue"
+    mm_show: str = "remaining"     # media timer: remaining | elapsed | duration | bookmark (TruCue)
     overtime: bool = True
     follow_format: bool = False
     phase_colors: bool = True      # colour by running / warning / expired
@@ -225,10 +227,10 @@ def phase(program: Optional[Program]) -> str:
     return "idle"
 
 
-def millumin_phase(view: Optional[MilluminView], yellow: float = 30.0, red: float = 10.0) -> str:
-    """Lights / colours for a Millumin clip, like Millumin's own time script: green while
-    playing, yellow in the last ``yellow`` seconds, red in the last ``red`` seconds and when
-    frozen on the last frame. A looping clip stays green; paused / stopped are idle."""
+def millumin_phase(view, yellow: float = 30.0, red: float = 10.0) -> str:
+    """Lights / colours for a media clip (Millumin or TruCue), like Millumin's own time script:
+    green while playing, yellow in the last ``yellow`` seconds, red in the last ``red`` seconds
+    and when frozen on the last frame. A looping clip stays green; paused / stopped are idle."""
     if view is None:
         return "idle"
     if view.mode == "freeze":
@@ -253,19 +255,47 @@ def millumin_tokens(view: Optional[MilluminView]) -> Dict[str, str]:
             "elapsed": format_time(view.elapsed)}
 
 
+media_phase = millumin_phase
+
+
+def trucue_tokens(view: Optional[TruCueView]) -> Dict[str, str]:
+    keys = ("clip", "index", "next", "prev", "remaining", "elapsed", "trt", "state", "playmode",
+            "bookmark", "bookmark_remaining", "volume")
+    if view is None:                     # no clip loaded: every token is empty
+        return {"tc_" + k: "" for k in keys}
+    vol = "" if view.volume is None else (f"{view.volume:+.1f} dB" if view.volume % 1 else f"{view.volume:+.0f} dB")
+    return {"tc_clip": view.clip, "tc_index": str(view.index) if view.index else "",
+            "tc_next": view.next, "tc_prev": view.prev,
+            "tc_remaining": format_time(view.remaining, round_up=True), "tc_elapsed": format_time(view.elapsed),
+            "tc_trt": format_time(view.duration) if view.duration else "",
+            "tc_state": view.status,
+            "tc_playmode": {"loop": "LOOP", "auto-next": "AUTO NEXT", "auto-first": "AUTO FIRST"}.get(view.mode, ""),
+            "tc_bookmark": view.bookmark,
+            "tc_bookmark_remaining": "" if view.bookmark_remaining is None
+            else format_time(view.bookmark_remaining, round_up=True),
+            "tc_volume": vol.replace("+0 dB", "0 dB")}
+
+
 def expand_tokens(text: str, state: Optional[LimitimerState], program: Optional[Program],
-                  millumin: Optional[MilluminView] = None) -> str:
+                  millumin: Optional[MilluminView] = None, trucue: Optional[TruCueView] = None) -> str:
     """Label tokens: {program} → 'PROGRAM 2', {n} → '2', {mode} → 'COUNTDOWN' / 'COUNT UP'.
 
     Millumin: {clip} {layer} {column} {trt} {remaining} {elapsed} {state} (PLAYING / PAUSED /
     STOPPED / FREEZE) and {playmode} (LOOP / FREEZE / empty). All empty when the current
     column has nothing on the layer.
+
+    TruCue: {tc_clip} {tc_index} {tc_next} {tc_prev} {tc_remaining} {tc_elapsed} {tc_trt}
+    {tc_state} (PLAYING / PAUSED) {tc_playmode} (LOOP / AUTO NEXT / AUTO FIRST) {tc_bookmark}
+    {tc_bookmark_remaining} {tc_volume}. All empty when no clip is loaded.
     """
     n = str(program.number) if program else "-"
     mode = "" if state is None else ("COUNTDOWN" if state.count_down else "COUNT UP")
     text = (text.replace("{program}", f"PROGRAM {n}")
                 .replace("{n}", n)
                 .replace("{mode}", mode))
+    if "{tc_" in text:
+        for k, v in trucue_tokens(trucue).items():
+            text = text.replace("{" + k + "}", v)
     if "{" in text:
         for k, v in millumin_tokens(millumin).items():
             text = text.replace("{" + k + "}", v)
@@ -359,6 +389,20 @@ def preset_millumin() -> Layout:
     ])
 
 
+def preset_trucue() -> Layout:
+    """TruCue playback: clip, a big countdown to OUT, progress, next bookmark and next clip."""
+    return Layout("TruCue countdown", "#000000", [
+        _e("label", 0.05, 0.05, 0.70, 0.09, text="{tc_clip}", color="#FFFFFF", align="left", name="Clip"),
+        _e("label", 0.75, 0.05, 0.20, 0.09, text="{tc_playmode}", color="#FFB000", align="right", name="Mode"),
+        _e("timer", 0.03, 0.17, 0.94, 0.46, source="trucue", mm_show="remaining", name="Remaining"),
+        _e("progress", 0.05, 0.66, 0.90, 0.035, source="trucue", bar_fill="elapsed", name="Progress"),
+        _e("label", 0.05, 0.73, 0.60, 0.08, text="{tc_bookmark}", color="#4A8CFF", align="left", name="Bookmark"),
+        _e("label", 0.65, 0.73, 0.30, 0.08, text="{tc_bookmark_remaining}", color="#4A8CFF", align="right",
+           name="Bookmark countdown"),
+        _e("label", 0.05, 0.85, 0.90, 0.08, text="NEXT: {tc_next}", color="#8A8A8A", align="left", name="Next clip"),
+    ])
+
+
 PRESETS = {
     "Confidence monitor": preset_confidence,
     "Corner overlay": preset_corner_overlay,
@@ -367,6 +411,7 @@ PRESETS = {
     "Timer + time of day": preset_timer_clock,
     "All four programs": preset_four_programs,
     "Millumin countdown": preset_millumin,
+    "TruCue countdown": preset_trucue,
 }
 
 
@@ -386,6 +431,6 @@ def default_element(type_: str) -> Element:
 __all__ = [
     "COMMON_FIELDS", "DEFAULT_COLORS", "ELEMENT_TYPES", "Element", "Layout", "NO_SIGNAL_MODES",
     "PRESETS", "SOURCES", "TYPE_FIELDS", "default_element", "expand_tokens", "format_color",
-    "millumin_phase", "millumin_tokens",
+    "MEDIA_SOURCES", "media_phase", "millumin_phase", "millumin_tokens", "trucue_tokens",
     "parse_color", "phase", "resolve_program",
 ]

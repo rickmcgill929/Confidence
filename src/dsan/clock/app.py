@@ -125,6 +125,7 @@ class Signals(QObject):
     detect_done = pyqtSignal(object)
     osc_press = pyqtSignal(object)
     mm_message = pyqtSignal(str, object, bool)
+    tc_message = pyqtSignal(str, object, bool)
     osc_message = pyqtSignal(str, object, str)
     update_result = pyqtSignal(object, object, bool)     # UpdateInfo | None, error text | None, manual
 
@@ -177,7 +178,7 @@ def _pct_spin(value: float) -> QDoubleSpinBox:
 _FIELD_LABELS = {
     "name": "Name", "visible": "Visible", "x": "Left", "y": "Top", "w": "Width", "h": "Height",
     "bg": "Background", "radius": "Corner radius", "color": "Colour", "font": "Font", "bold": "Bold",
-    "align": "Align", "source": "Source", "mm_show": "Millumin shows", "overtime": "Count past zero (+00:20)",
+    "align": "Align", "source": "Source", "mm_show": "Media timer shows", "overtime": "Count past zero (+00:20)",
     "follow_format": "Follow DIP 2/3 format", "phase_colors": "Colour by phase",
     "follow_blink": "Flash with Limitimer blink",
     "orientation": "Orientation", "show_idle": "Green while stopped",
@@ -188,8 +189,9 @@ _FIELD_LABELS = {
 _CHOICES = {
     "align": [("left", "Left"), ("center", "Centre"), ("right", "Right")],
     "source": [("selected", "Selected on Limitimer")] + [(n, f"Program {n}") for n in SOURCES[1:5]]
-              + [("millumin", "Millumin")],
-    "mm_show": [("remaining", "Remaining (countdown)"), ("elapsed", "Elapsed"), ("duration", "Duration (TRT)")],
+              + [("millumin", "Millumin"), ("trucue", "TruCue")],
+    "mm_show": [("remaining", "Remaining (countdown)"), ("elapsed", "Elapsed"), ("duration", "Duration (TRT)"),
+                ("bookmark", "Next bookmark (TruCue)")],
     "orientation": [("horizontal", "Horizontal"), ("vertical", "Vertical")],
     "cue_style": [("arrows", "Arrows ◁ ● ▷"), ("light", "Full colour light"), ("frame", "Outline frame"),
                   ("text", "Text")],
@@ -251,7 +253,9 @@ class PropertyEditor(QWidget):
             self._form.addRow(_FIELD_LABELS.get(f, f), self._widget_for(e, f))
         if e.type == "label":
             hint = QLabel("Limitimer: {program}  {n}  {mode}\nMillumin: {clip}  {layer}  {column}  {trt}  "
-                          "{remaining}  {elapsed}  {state}  {playmode}")
+                          "{remaining}  {elapsed}  {state}  {playmode}\nTruCue: {tc_clip}  {tc_index}  {tc_next}  "
+                          "{tc_prev}  {tc_remaining}  {tc_elapsed}  {tc_trt}  {tc_state}  {tc_playmode}  "
+                          "{tc_bookmark}  {tc_bookmark_remaining}  {tc_volume}")
             hint.setWordWrap(True)
             hint.setObjectName("dim")
             self._form.addRow("", hint)
@@ -421,6 +425,7 @@ class ControlWindow(QMainWindow):
         self.osc = None
         self.osc_in = None
         self.mm_rx = None
+        self.tc_rx = None
         self._detecting = False
         self._port_infos: Dict[str, portsmod.PortInfo] = {}
         self.refs: Dict[str, Optional[portsmod.PortRef]] = {"lt": None, "pc": None}
@@ -457,6 +462,7 @@ class ControlWindow(QMainWindow):
     def _tick(self):
         self._ticks += 1
         self._update_millumin()
+        self._update_trucue()
         self.decklink_panel.update_status()
         if self._ticks % 2 == 0 and not self._detecting:
             self._refresh_ports()
@@ -525,8 +531,10 @@ class ControlWindow(QMainWindow):
     def frame(self) -> Frame:
         now = time.monotonic()
         mm = self.mm_rx.tracker.view(self.mm_layer_name(), now) if self.mm_rx else None
+        tc = self.tc_rx.tracker.view(now) if self.tc_rx else None
         return Frame(state=self.lt_state, link=self.lt_link, cue=self.cue, message=self.message,
                      millumin=mm, mm_yellow=self.mm_yellow.value(), mm_red=self.mm_red.value(),
+                     trucue=tc, tc_yellow=self.tc_yellow.value(), tc_red=self.tc_red.value(),
                      now=now, wall=_dt.datetime.now())
 
     def _aspect(self) -> float:
@@ -630,6 +638,7 @@ class ControlWindow(QMainWindow):
         lv.addWidget(self._build_message())
         lv.addWidget(self._build_osc())
         lv.addWidget(self._build_millumin())
+        lv.addWidget(self._build_trucue())
         lv.addStretch()
         scroll = QScrollArea()
         scroll.setWidget(left)
@@ -970,6 +979,109 @@ class ControlWindow(QMainWindow):
         self.sig.osc_press.connect(lambda b: self._on_pc_button(b, test=True))
         self.sig.osc_message.connect(self._on_osc_message)
         return g
+
+    def _build_trucue(self) -> QGroupBox:
+        g = QGroupBox("TRUCUE")
+        form = QFormLayout(g)
+        self.tc_enable = QCheckBox("Receive TruCue feedback")
+        self.tc_enable.setEnabled(OSC_AVAILABLE)
+        self.tc_enable.setToolTip("Clip, countdown to OUT, next clip and the next bookmark from TruCue. Use the "
+                                  "TruCue source on timers, progress bars and lights, and {tc_clip} "
+                                  "{tc_remaining} {tc_bookmark}… in labels.")
+        self.tc_enable.toggled.connect(self._rebuild_trucue)
+        self.tc_port = QSpinBox()
+        self.tc_port.setRange(1024, 65535)
+        self.tc_port.setValue(9017)
+        self.tc_forward = QLineEdit()
+        self.tc_forward.setPlaceholderText("off — e.g. 127.0.0.1:9018 for Companion")
+        self.tc_forward.setToolTip("TruCue sends its feedback to one place. To keep Companion's TruCue module "
+                                   "working on this computer, set its feedback port to another number (e.g. 9018) "
+                                   "and forward to it here.")
+        thresholds = QHBoxLayout()
+        self.tc_yellow = QSpinBox()
+        self.tc_red = QSpinBox()
+        for w, val, tip in ((self.tc_yellow, 30, "Timers turn yellow with this many seconds left"),
+                            (self.tc_red, 10, "Timers turn red with this many seconds left")):
+            w.setRange(0, 3600)
+            w.setSuffix(" s")
+            w.setValue(val)
+            w.setToolTip(tip)
+        for text, w in (("Yellow", self.tc_yellow), ("Red", self.tc_red)):
+            lbl = QLabel(text)
+            lbl.setObjectName("dim")
+            thresholds.addWidget(lbl)
+            thresholds.addWidget(w)
+        thresholds.addStretch()
+        self.tc_status = QLabel("" if OSC_AVAILABLE else "python-osc not installed")
+        self.tc_status.setWordWrap(True)
+        self.tc_hint = QLabel()
+        self.tc_hint.setObjectName("dim")
+        self.tc_hint.setWordWrap(True)
+        form.addRow(self.tc_enable)
+        form.addRow("Listen port", self.tc_port)
+        form.addRow("Forward to", self.tc_forward)
+        form.addRow("Last seconds", thresholds)
+        form.addRow(self.tc_status)
+        form.addRow(self.tc_hint)
+        self.sig.tc_message.connect(self._on_tc_message)
+        return g
+
+    @staticmethod
+    def _parse_hostport(text: str):
+        host, _, port = text.strip().rpartition(":")
+        if not text.strip():
+            return None
+        if not host or not port.isdigit() or not 0 < int(port) < 65536:
+            raise ValueError(f"“{text}” isn't host:port")
+        return host, int(port)
+
+    def _rebuild_trucue(self, *_):
+        if self.tc_rx:
+            self.tc_rx.close()
+            self.tc_rx = None
+        on = OSC_AVAILABLE and self.tc_enable.isChecked()
+        self.tc_port.setEnabled(not on)
+        self.tc_forward.setEnabled(not on)
+        if not on:
+            self.tc_status.setText("")
+            self.tc_hint.setText("")
+            return
+        from ..trucue import TruCueReceiver
+        port = self.tc_port.value()
+        try:
+            forward = self._parse_hostport(self.tc_forward.text())
+            if forward and forward[1] == port and forward[0] in ("127.0.0.1", "localhost", "0.0.0.0"):
+                raise ValueError("forwarding to the port Confidence listens on would loop")
+            self.tc_rx = TruCueReceiver(port, forward=forward, on_message=self.sig.tc_message.emit)
+        except (OSError, ValueError) as e:
+            self.tc_enable.setChecked(False)
+            why = getattr(e, "strerror", None) or str(e)
+            self._status(self.tc_status, f"Can't start TruCue feedback: {why}", "#FF3B3B")
+            return
+        self.tc_hint.setText(f"In TruCue: Settings → OSC → turn on Companion feedback, host = this computer's IP "
+                             f"address (127.0.0.1 if TruCue runs here), port {port}."
+                             + (f" Forwarding to {forward[0]}:{forward[1]}." if forward else ""))
+        self._update_trucue()
+
+    def _on_tc_message(self, address: str, args, used: bool):
+        self.debug_tap.trucue(address, tuple(args), used)
+
+    def _update_trucue(self):
+        rx = self.tc_rx
+        if rx is None:
+            return
+        v = rx.tracker.view()
+        if not rx.tracker.received:
+            self._status(self.tc_status, f"● Waiting for TruCue on port {rx.port}", "#FFB000")
+        elif not (bool(rx.tracker.last_message) and time.monotonic() - rx.tracker.last_message < 5):
+            self._status(self.tc_status, "● No feedback from TruCue for a while", "#FFB000")
+        elif v is None:
+            self._status(self.tc_status, "● Connected — no clip loaded", "#00E07A")
+        else:
+            from ..millumin import format_time
+            mode = {"loop": " · LOOP", "auto-next": " · AUTO NEXT", "auto-first": " · AUTO FIRST"}.get(v.mode, "")
+            self._status(self.tc_status, f"● {v.clip} — {v.status}{mode} · "
+                                         f"{format_time(v.remaining, round_up=True)} left", "#00E07A")
 
     def _build_millumin(self) -> QGroupBox:
         g = QGroupBox("MILLUMIN")
@@ -2056,6 +2168,12 @@ class ControlWindow(QMainWindow):
         self.mm_red.setValue(s.value("millumin/red", 10, type=int))
         if OSC_AVAILABLE and s.value("millumin/enabled", False, type=bool):
             self.mm_enable.setChecked(True)
+        self.tc_port.setValue(s.value("trucue/port", 9017, type=int))
+        self.tc_forward.setText(s.value("trucue/forward", "", type=str))
+        self.tc_yellow.setValue(s.value("trucue/yellow", 30, type=int))
+        self.tc_red.setValue(s.value("trucue/red", 10, type=int))
+        if OSC_AVAILABLE and s.value("trucue/enabled", False, type=bool):
+            self.tc_enable.setChecked(True)
         if OSC_AVAILABLE and s.value("osc/in_enabled", False, type=bool):
             self.osc_in_enable.setChecked(True)
         if s.value("output/visible", True, type=bool):
@@ -2170,6 +2288,11 @@ class ControlWindow(QMainWindow):
         s.setValue("millumin/yellow", self.mm_yellow.value())
         s.setValue("millumin/red", self.mm_red.value())
         s.setValue("millumin/enabled", self.mm_enable.isChecked())
+        s.setValue("trucue/port", self.tc_port.value())
+        s.setValue("trucue/forward", self.tc_forward.text().strip())
+        s.setValue("trucue/yellow", self.tc_yellow.value())
+        s.setValue("trucue/red", self.tc_red.value())
+        s.setValue("trucue/enabled", self.tc_enable.isChecked())
         s.setValue("osc/in_enabled", self.osc_in_enable.isChecked())
         self.decklink_panel.save(s)
         self._autosave_layout()
@@ -2183,6 +2306,9 @@ class ControlWindow(QMainWindow):
         if self.mm_rx:
             self.mm_rx.close()
             self.mm_rx = None
+        if self.tc_rx:
+            self.tc_rx.close()
+            self.tc_rx = None
         if self.osc_in:
             self.osc_in.close()
             self.osc_in = None

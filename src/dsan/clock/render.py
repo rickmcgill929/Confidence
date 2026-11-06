@@ -15,6 +15,7 @@ from ..devices import LinkState
 from ..limitimer import LimitimerState
 from ..perfectcue import Button
 from ..millumin import MilluminView, format_time
+from ..trucue import TruCueView
 from .layout import Element, Layout, expand_tokens, millumin_phase, parse_color, phase, resolve_program
 
 
@@ -51,6 +52,9 @@ class Frame:
     cue: CueState = field(default_factory=CueState)
     message: str = ""
     millumin: Optional[MilluminView] = None
+    trucue: Optional[TruCueView] = None
+    tc_yellow: float = 30.0          # TruCue: seconds left that turn timers yellow …
+    tc_red: float = 10.0             # … and red
     mm_yellow: float = 30.0          # Millumin: seconds left that turn timers yellow …
     mm_red: float = 10.0             # … and red
     now: float = field(default_factory=time.monotonic)
@@ -238,12 +242,20 @@ class Renderer:
     def _no_signal(self, layout: Layout, frame: Frame) -> bool:
         return frame.state is not None and not frame.live and layout.no_signal != "ignore"
 
-    def _mm_phase(self, frame: Frame) -> str:
-        return millumin_phase(frame.millumin, frame.mm_yellow, frame.mm_red)
+    @staticmethod
+    def _media(frame: Frame, source: str):
+        """(view, yellow, red) for a media source (Millumin or TruCue)."""
+        if source == "trucue":
+            return frame.trucue, frame.tc_yellow, frame.tc_red
+        return frame.millumin, frame.mm_yellow, frame.mm_red
+
+    def _mm_phase(self, frame: Frame, source: str = "millumin") -> str:
+        v, yellow, red = self._media(frame, source)
+        return millumin_phase(v, yellow, red)
 
     def _draw_mm_timer(self, p, rect, e, layout, frame, editing):
         self._bg(p, rect, e)
-        v = frame.millumin
+        v = self._media(frame, e.source)[0]
         if v is None:                        # nothing on the layer: blank (placeholder while editing)
             if editing:
                 self._text(p, rect, "--:--", e, self.qcolor(layout.color("dim")).lighter(250))
@@ -252,15 +264,20 @@ class Renderer:
             text = format_time(v.elapsed)
         elif e.mm_show == "duration":
             text = format_time(v.duration)
+        elif e.mm_show == "bookmark":
+            bm = getattr(v, "bookmark_remaining", None)
+            if bm is None:
+                return                       # no bookmark ahead (or Millumin): blank
+            text = format_time(bm, round_up=True)
         else:
             text = format_time(v.remaining, round_up=True)
-        color = self._phase_color(layout, self._mm_phase(frame)) if e.phase_colors else self.qcolor(e.color)
+        color = self._phase_color(layout, self._mm_phase(frame, e.source)) if e.phase_colors else self.qcolor(e.color)
         if not v.live and v.state != "playing":
             color = _NO_SIGNAL_DIM
         self._text(p, rect, text, e, color)
 
     def _draw_timer(self, p, rect, e, layout, frame, blink_on, slow_on, editing):
-        if e.source == "millumin":
+        if e.source in ("millumin", "trucue"):
             return self._draw_mm_timer(p, rect, e, layout, frame, editing)
         prog = resolve_program(frame.state, e.source)
         if self._no_signal(layout, frame) and layout.no_signal == "hide" and not editing:
@@ -289,8 +306,8 @@ class Renderer:
         self._bg(p, rect, e)
         prog = resolve_program(frame.state, e.source)
         lit = None
-        if e.source == "millumin":
-            lit = {"running": 0, "warning": 1, "expired": 2}.get(self._mm_phase(frame))
+        if e.source in ("millumin", "trucue"):
+            lit = {"running": 0, "warning": 1, "expired": 2}.get(self._mm_phase(frame, e.source))
             prog = None
         if prog is not None and not self._no_signal(layout, frame):
             ph = phase(prog)
@@ -394,12 +411,12 @@ class Renderer:
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(self.qcolor(e.bg) if self.qcolor(e.bg).alpha() else self.qcolor(layout.color("dim")))
         p.drawRoundedRect(rect, rad, rad)
-        if e.source == "millumin":
-            v = frame.millumin
+        if e.source in ("millumin", "trucue"):
+            v = self._media(frame, e.source)[0]
             if v is None or v.fraction is None:
                 return
             frac = v.fraction if e.bar_fill == "elapsed" else 1.0 - v.fraction   # auto = remaining
-            ph = self._mm_phase(frame)
+            ph = self._mm_phase(frame, e.source)
         else:
             if prog is None or prog.total <= 0 or self._no_signal(layout, frame):
                 return
@@ -430,9 +447,9 @@ class Renderer:
     def _draw_label(self, p, rect, e, layout, frame, blink_on, slow_on, editing):
         self._bg(p, rect, e)
         prog = resolve_program(frame.state, e.source)
-        text = expand_tokens(e.text, frame.state, prog, frame.millumin)
+        text = expand_tokens(e.text, frame.state, prog, frame.millumin, frame.trucue)
         if frame.state is None and "{" in e.text:
-            text = expand_tokens(e.text, None, None, frame.millumin).replace("PROGRAM -", "PROGRAM")
+            text = expand_tokens(e.text, None, None, frame.millumin, frame.trucue).replace("PROGRAM -", "PROGRAM")
         self._text(p, rect, text, e, self.qcolor(e.color), digits=False)
 
     def _draw_message(self, p, rect, e, layout, frame, blink_on, slow_on, editing):
