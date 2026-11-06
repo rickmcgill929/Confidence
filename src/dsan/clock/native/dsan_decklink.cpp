@@ -125,8 +125,12 @@ struct Device {
     std::vector<ModeInfo> modes;
 };
 
-std::mutex gDevicesMutex;
-std::vector<Device> gDevices;
+// Both live for the whole process and are never destroyed: as a plain global, the
+// device list's destructor ran inside exit() after the DeckLink API had already torn
+// down its own state, and releasing an IDeckLink then called std::terminate (crash on
+// quit). The OS reclaims the memory and driver handles when the process ends.
+std::mutex& gDevicesMutex = *new std::mutex;
+std::vector<Device>& gDevices = *new std::vector<Device>;
 
 void scanModes(Device& d) {
     d.modes.clear();

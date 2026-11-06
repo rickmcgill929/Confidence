@@ -6,6 +6,11 @@ Built apps also carry a build number (date and time of the build), shown in **Ab
 
 ## [Unreleased]
 
+## [0.7.2] — 2026-11-06
+
+### Fixed
+- Crash when quitting on Macs with a DeckLink card ("Confidence quit unexpectedly"): the SDI bridge released its DeckLink devices after the Blackmagic driver library had already shut down.
+
 ## [0.7.1] — 2026-11-06
 
 ### Added
