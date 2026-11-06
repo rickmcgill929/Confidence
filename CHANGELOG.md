@@ -6,6 +6,8 @@ Built apps also carry a build number (date and time of the build), shown in **Ab
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-11-06
+
 ## [0.8.0] — 2026-11-06
 
 ### Added
