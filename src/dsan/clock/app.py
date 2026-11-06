@@ -24,7 +24,8 @@ from PyQt6.QtGui import QAction, QColor, QDesktopServices, QFontDatabase, QGuiAp
 from PyQt6.QtWidgets import (
     QApplication, QCheckBox, QColorDialog, QComboBox, QDialog, QDoubleSpinBox, QFormLayout, QGridLayout,
     QGroupBox, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMainWindow,
-    QMenu, QMessageBox, QPushButton, QScrollArea, QSpinBox, QSplitter, QTextBrowser, QToolButton, QVBoxLayout,
+    QMenu, QMessageBox, QPushButton, QScrollArea, QSizePolicy, QSpinBox, QSplitter, QTextBrowser, QToolButton,
+    QVBoxLayout,
     QWidget,
 )
 
@@ -38,7 +39,7 @@ from .layout import (COMMON_FIELDS, ELEMENT_TYPES, PRESETS, SOURCES, TYPE_FIELDS
                      Element, Layout, default_element, format_color, parse_color)
 from . import align as al
 from . import files
-from .widgets import Combo
+from .widgets import Combo, ElidingLabel, FlowLayout
 from .debug import DebugTap, DebugWindow
 from .decklink_panel import DeckLinkPanel
 from .editor import EditorCanvas, History, make_icon
@@ -643,9 +644,13 @@ class ControlWindow(QMainWindow):
         scroll = QScrollArea()
         scroll.setWidget(left)
         scroll.setWidgetResizable(True)
-        scroll.setMinimumWidth(380)
-        scroll.setMaximumWidth(460)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        # wide enough for the panels plus the vertical scroll bar, so nothing is cut off at the right
+        need = left.minimumSizeHint().width() + scroll.verticalScrollBar().sizeHint().width() + 2 * scroll.frameWidth()
+        scroll.setMinimumWidth(max(380, need))
+        scroll.setMaximumWidth(max(460, need + 40))
         root.addWidget(scroll)
+        root.setCollapsible(0, False)
 
         # right: preview + editor
         right = QWidget()
@@ -665,11 +670,12 @@ class ControlWindow(QMainWindow):
             b.clicked.connect(slot)
             bar.addWidget(b)
         bar.addStretch()
-        self.layout_label = QLabel()
+        self.layout_label = ElidingLabel()
         self.layout_label.setObjectName("dim")
-        bar.addWidget(self.layout_label)
+        self.layout_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        bar.addWidget(self.layout_label, 1)
         rv.addLayout(bar)
-        rv.addLayout(self._build_align_bar())
+        rv.addWidget(self._build_align_bar())
 
         split = QSplitter(Qt.Orientation.Vertical)
         self.preview = EditorCanvas(lambda: self.layout_obj, self.frame, self._aspect, self.renderer,
@@ -679,9 +685,8 @@ class ControlWindow(QMainWindow):
         self.preview.delete_requested.connect(self._delete_element)
         split.addWidget(self.preview)
 
-        bottom = QWidget()
-        bh = QHBoxLayout(bottom)
-        bh.setContentsMargins(0, 0, 0, 0)
+        bottom = QSplitter(Qt.Orientation.Horizontal)       # element list | properties, draggable
+        bottom.setChildrenCollapsible(False)
         listcol = QVBoxLayout()
         self.element_list = QListWidget()
         self.element_list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
@@ -712,8 +717,9 @@ class ControlWindow(QMainWindow):
         listcol.addLayout(btns)
         lw = QWidget()
         lw.setLayout(listcol)
-        lw.setMaximumWidth(300)
-        bh.addWidget(lw)
+        listcol.setContentsMargins(0, 0, 0, 0)
+        lw.setMinimumWidth(lw.minimumSizeHint().width())
+        bottom.addWidget(lw)
 
         families = sorted(set(QFontDatabase.families()))
         self.props = PropertyEditor(families)
@@ -730,7 +736,13 @@ class ControlWindow(QMainWindow):
         ps = QScrollArea()
         ps.setWidget(holder)
         ps.setWidgetResizable(True)
-        bh.addWidget(ps, 1)
+        ps.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._props_scroll = ps
+        self._fit_props_width()
+        bottom.addWidget(ps)
+        bottom.setStretchFactor(0, 0)
+        bottom.setStretchFactor(1, 1)
+        bottom.setSizes([lw.minimumWidth() + 20, 600])
         split.addWidget(bottom)
         split.setSizes([480, 300])
         rv.addWidget(split)
@@ -1739,7 +1751,7 @@ class ControlWindow(QMainWindow):
 
     def _update_layout_label(self):
         where = os.path.basename(self.layout_path) if self.layout_path else "not saved to a file"
-        self.layout_label.setText(f"{self.layout_obj.name} — {where}")
+        self.layout_label.set_full_text(f"{self.layout_obj.name} — {where}")
 
     def _load_preset(self, index: int):
         name = self.preset_combo.itemData(index)
@@ -1750,6 +1762,14 @@ class ControlWindow(QMainWindow):
         if name == "Corner overlay" and self.mode_combo.currentData() != "overlay":
             self.statusBar().showMessage("Corner overlay has a transparent background — "
                                          "set Output mode to Overlay to put it over slides", 8000)
+
+    def _fit_props_width(self):
+        """The properties panel never needs a sideways scroll bar: it's at least as wide as its fields."""
+        ps = getattr(self, "_props_scroll", None)
+        if ps is None:
+            return
+        need = ps.widget().minimumSizeHint().width() + ps.verticalScrollBar().sizeHint().width() + 2 * ps.frameWidth()
+        ps.setMinimumWidth(need)
 
     # ── alignment toolbar ────────────────────────────────────────────────────────
 
@@ -1763,22 +1783,35 @@ class ControlWindow(QMainWindow):
             b.clicked.connect(slot)
         return b
 
-    def _build_align_bar(self) -> QHBoxLayout:
-        h = QHBoxLayout()
-        h.setSpacing(2)
+    def _build_align_bar(self) -> QWidget:
+        """The editor toolbar: groups of tools that wrap onto a second row when the window is narrow."""
+        bar = QWidget()
+        flow = FlowLayout(bar, h_spacing=4, v_spacing=4)
+        state = {"h": None}
 
-        def sep():
-            line = QLabel("│")
-            line.setObjectName("dim")
-            h.addSpacing(4)
-            h.addWidget(line)
-            h.addSpacing(4)
+        def group(first: bool = False):
+            g = QWidget()
+            hl = QHBoxLayout(g)
+            hl.setContentsMargins(0, 0, 0, 0)
+            hl.setSpacing(2)
+            if not first:
+                line = QLabel("│")
+                line.setObjectName("dim")
+                line.setFixedWidth(line.sizeHint().width())
+                g.setProperty("flow_sep", line)          # FlowLayout blanks it when the group starts a row
+                hl.addWidget(line)
+                hl.addSpacing(4)
+            flow.addWidget(g)
+            state["h"] = hl
+            return hl
+
+        h = group(first=True)
 
         self.undo_btn = self._tool("undo", "Undo (⌘Z)", self._undo)
         self.redo_btn = self._tool("redo", "Redo (⇧⌘Z)", self._redo)
         h.addWidget(self.undo_btn)
         h.addWidget(self.redo_btn)
-        sep()
+        h = group()
         self._align_btns = []
         for how, tip in (("left", "Align left edges"), ("hcenter", "Align horizontal centres"),
                          ("right", "Align right edges"), ("top", "Align top edges"),
@@ -1798,7 +1831,7 @@ class ControlWindow(QMainWindow):
         self.align_to.setMinimumWidth(110)
         self.align_to.setStyleSheet("min-width: 90px;")
         h.addWidget(self.align_to)
-        sep()
+        h = group()
         self.dist_h = self._tool("dist-h", "Distribute horizontally (3 or more)", lambda: self._distribute("h"))
         self.dist_v = self._tool("dist-v", "Distribute vertically (3 or more)", lambda: self._distribute("v"))
         self.match_w = self._tool("match-w", "Match width of the first selected", lambda: self._match("width"))
@@ -1806,7 +1839,7 @@ class ControlWindow(QMainWindow):
         self.fill_btn = self._tool("fill", "Fill the canvas (or the safe area chosen in 'to')", self._fill)
         for b in (self.dist_h, self.dist_v, self.match_w, self.match_h, self.fill_btn):
             h.addWidget(b)
-        sep()
+        h = group()
         self.snap_btn = self._tool("snap", "Smart guides: snap to edges, centres and safe areas "
                                            "(hold ⌘ while dragging to turn off)", self._editor_options, True)
         self.snap_btn.setChecked(True)
@@ -1821,8 +1854,8 @@ class ControlWindow(QMainWindow):
         self.grid_combo.currentIndexChanged.connect(lambda _i: self._editor_options())
         for w in (self.snap_btn, self.safe_btn, self.grid_btn, self.grid_combo):
             h.addWidget(w)
-        h.addStretch()
-        return h
+        bar.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
+        return bar
 
     def _editor_options(self, *_):
         c = self.preview
@@ -1992,6 +2025,7 @@ class ControlWindow(QMainWindow):
         else:
             self.props.show_element(None)
             self.layout_props.show_layout(self.layout_obj)
+        self._fit_props_width()
         if sync_list:
             self._sync_list_selection()
         self._update_tools()

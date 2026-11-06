@@ -34,6 +34,7 @@ from .. import limitimer as lt
 from .. import perfectcue as pc
 from ..devices import Limitimer, PerfectCue
 from . import files
+from .widgets import FlowLayout
 
 MAX_LINES = 5000
 MAX_QUEUE = 50000
@@ -179,7 +180,18 @@ class DebugWindow(QWidget):
 
     def _build(self):
         v = QVBoxLayout(self)
-        bar = QHBoxLayout()
+        top = QWidget()
+        flow = FlowLayout(top, h_spacing=16, v_spacing=4)    # wraps onto more rows in a narrow window
+        bar = None
+
+        def group():
+            nonlocal bar
+            g = QWidget()
+            bar = QHBoxLayout(g)
+            bar.setContentsMargins(0, 0, 0, 0)
+            bar.setSpacing(8)
+            flow.addWidget(g)
+            return bar
 
         def box(text, on, tip):
             c = QCheckBox(text)
@@ -187,19 +199,21 @@ class DebugWindow(QWidget):
             c.setToolTip(tip)
             bar.addWidget(c)
             return c
+        group()
         self.f_lt = box("Limitimer", True, "Show Limitimer lines")
         self.f_pc = box("Perfect Cue", True, "Show Perfect Cue lines")
         self.f_mm = box("Millumin", True, "Show OSC received from Millumin (time updates only with Raw bytes on)")
         self.f_tc = box("TruCue", True, "Show TruCue feedback: clip changes, play/pause and playlists "
                                         "(every status message with Raw bytes on)")
-        bar.addSpacing(10)
+        group()
         self.f_raw = box("Raw bytes", False, "Every chunk read from the serial port, in hex")
         self.f_pkt = box("Packets", True, "Every framed Limitimer packet: type, size, CRC result")
         self.f_ping = box("Pings", False, "Include Limitimer ping (0x10) packets")
         self.f_state = box("Decoded state", True, "The decoded Limitimer status")
         self.f_changes = box("Changes only", True, "Decoded state only when something other than the "
                                                     "sequence counter changes")
-        bar.addStretch()
+        group()
+        bar.setSpacing(4)
         self.pause_btn = QPushButton("Pause")
         self.pause_btn.setCheckable(True)
         self.pause_btn.setToolTip("Stop scrolling new lines (data is still counted)")
@@ -218,7 +232,7 @@ class DebugWindow(QWidget):
                                 "(handy to send for protocol checks)")
         self.rec_btn.clicked.connect(self._toggle_record)
         bar.addWidget(self.rec_btn)
-        v.addLayout(bar)
+        v.addWidget(top)
         for c in (self.f_lt, self.f_pc, self.f_mm, self.f_tc, self.f_raw, self.f_pkt, self.f_ping, self.f_state, self.f_changes):
             c.toggled.connect(self._save_settings)
 

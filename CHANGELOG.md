@@ -6,6 +6,13 @@ Built apps also carry a build number (date and time of the build), shown in **Ab
 
 ## [Unreleased]
 
+## [0.6.1] — 2026-11-05
+
+### Fixed
+- The window can be made much narrower (from 1205 to 973 pixels): the editor toolbar wraps onto a second row, the layout's file name shortens with …, and the left panel no longer scrolls sideways.
+- The element list and the properties panel have a draggable divider, and the properties panel never needs a sideways scroll bar.
+- The debug console's filters and buttons wrap in a narrow window (it was at least 1268 pixels wide).
+
 ## [0.6.0] — 2026-11-05
 
 ### Added
