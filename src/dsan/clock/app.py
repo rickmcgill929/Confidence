@@ -580,11 +580,13 @@ class ControlWindow(QMainWindow):
         self.auto_update_action = QAction("Check for Updates Automatically", self)
         self.auto_update_action.setCheckable(True)
         self.auto_update_action.setChecked(True)
-        self.auto_update_action.toggled.connect(lambda on: self.settings.setValue("updates/auto", on))
+        self.auto_update_action.toggled.connect(self._auto_update_toggled)
         help_menu.addAction(self.auto_update_action)
         self.sig.update_result.connect(self._on_update_result)
         self.update_info = None
         self._update_running = False
+        from . import sparkle as sparkle_mod
+        self.sparkle = sparkle_mod.load()          # the signed Mac app: Sparkle installs updates in place
 
         devices_menu = self.menuBar().addMenu("Devices")
         self.detect_action = QAction("Detect adapters", self)
@@ -2213,13 +2215,21 @@ class ControlWindow(QMainWindow):
         if s.value("output/visible", True, type=bool):
             QTimer.singleShot(0, lambda: self.show_output_btn.setChecked(True))
         self.decklink_panel.load(s)
-        self.auto_update_action.setChecked(s.value("updates/auto", True, type=bool))
-        if self._auto_update_due():
-            QTimer.singleShot(4000, lambda: self.check_for_updates(manual=False))
+        if self.sparkle is not None:
+            self.auto_update_action.setChecked(self.sparkle.automatic)   # Sparkle keeps its own setting
+        else:
+            self.auto_update_action.setChecked(s.value("updates/auto", True, type=bool))
+            if self._auto_update_due():
+                QTimer.singleShot(4000, lambda: self.check_for_updates(manual=False))
 
     # ── updates ─────────────────────────────────────────────────────────────────
 
     UPDATE_INTERVAL = 24 * 3600
+
+    def _auto_update_toggled(self, on: bool):
+        self.settings.setValue("updates/auto", on)
+        if self.sparkle is not None:
+            self.sparkle.automatic = on
 
     def _auto_update_due(self) -> bool:
         if not self.auto_update_action.isChecked():
@@ -2230,7 +2240,12 @@ class ControlWindow(QMainWindow):
         return time.time() - last >= self.UPDATE_INTERVAL
 
     def check_for_updates(self, manual: bool = True):
-        """Ask GitHub for the latest release on a background thread; the answer arrives on the GUI thread."""
+        """Sparkle's update window in the signed Mac app; elsewhere ask GitHub for the latest release on a
+        background thread (the answer arrives on the GUI thread)."""
+        if self.sparkle is not None:
+            if manual:
+                self.sparkle.check_for_updates()
+            return
         if self._update_running:
             return
         self._update_running = True

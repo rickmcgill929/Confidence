@@ -36,7 +36,7 @@ hiddenimports = (
        "pythonosc.dispatcher", "pythonosc.osc_server"]
 )
 if MAC:
-    hiddenimports += ["objc"]                 # pyobjc: window levels over full-screen slideshows
+    hiddenimports += ["objc", "Foundation"]   # pyobjc: window levels over full-screen slideshows; Sparkle
 
 excludes = [
     "aiohttp", "tkinter", "pytest", "PyQt6.QtWebEngineCore", "PyQt6.QtWebEngineWidgets",
@@ -96,6 +96,18 @@ exe = EXE(
 
 coll = COLLECT(exe, a.binaries, a.datas, name="Confidence")
 
+# Sparkle in-app updates: build_macos.sh sets these when it signs with a Developer ID
+SPARKLE_KEYS = {}
+if MAC and os.environ.get("SPARKLE_FEED_URL") and os.environ.get("SPARKLE_PUBLIC_KEY"):
+    SPARKLE_KEYS = {
+        "SUFeedURL": os.environ["SPARKLE_FEED_URL"],
+        "SUPublicEDKey": os.environ["SPARKLE_PUBLIC_KEY"],
+        "SUEnableAutomaticChecks": True,
+        "SUScheduledCheckInterval": 86400,
+        "SUAllowsAutomaticUpdates": True,
+    }
+    print("Sparkle:", SPARKLE_KEYS["SUFeedURL"])
+
 if MAC:
     app = BUNDLE(
         coll,
@@ -107,11 +119,14 @@ if MAC:
             "CFBundleName": "Confidence",
             "CFBundleDisplayName": "Confidence",
             "CFBundleShortVersionString": VERSION,
-            "CFBundleVersion": BUILD,             # build number, e.g. 20261104.1540
+            # version + build (0.6.1.20261105.1540): Sparkle compares this, so a release always beats an
+            # older version's later build
+            "CFBundleVersion": VERSION if BUILD == VERSION else f"{VERSION}.{BUILD}",
             "NSHighResolutionCapable": True,
             "NSRequiresAquaSystemAppearance": False,
             "LSMinimumSystemVersion": "11.0",
             "LSApplicationCategoryType": "public.app-category.utilities",
             "NSHumanReadableCopyright": "© 2026 Rick McGill / TRUCUE. MIT licensed.",
+            **SPARKLE_KEYS,
         },
     )

@@ -14,3 +14,5 @@ src/dsan/clock/native/*.so
 src/dsan/_build.py
 # personal layouts saved in the project folder
 /RM Confidence monitor.json
+# downloaded by packaging/fetch_sparkle.sh
+packaging/vendor/

@@ -347,17 +347,31 @@ That creates `dist/Confidence.app` and `dist/Confidence-<version>-macOS-<arch>.d
 
 ### Updates and releases
 
-Confidence checks GitHub for a newer release once a day, a few seconds after launch (turn it off under **Help → Check for Updates Automatically**), or any time from **Help → Check for Updates…** (in the Confidence menu on a Mac). When there is one you see its release notes and a **Download** button for the right file for that computer; installing is up to you, as for the first install. **Skip This Version** stops the reminders for that release. The check sends nothing but the app's version, and works without a GitHub account.
+**On a Mac (signed release builds)** Confidence updates itself with [Sparkle](https://sparkle-project.org): **Confidence → Check for Updates…** shows what's new and **Install Update** downloads it, checks its signature and installs it on relaunch. It downloads a **delta** — only what changed since your version, usually a few MB instead of the whole app — when there is one. Automatic checks run daily (**Check for Updates Automatically** in the Help menu).
 
-To publish a release (this is what the update check finds):
+**On Windows, Linux, from source, or an ad-hoc-signed Mac build**, Help → Check for Updates… looks at the latest GitHub release and offers the right download for that computer. The check sends nothing but the app's version.
+
+#### One-time setup for signed, self-updating Mac releases
+
+Needs your Apple Developer ID (Developer Program membership) and the GitHub CLI (`brew install gh`, `gh auth login`). On your Mac:
+
+```bash
+packaging/setup_signing.sh
+```
+
+It makes Confidence's Sparkle signing key (kept in your login keychain — back it up), writes the public half to `packaging/sparkle_public_key.txt` (commit it), and stores these as encrypted GitHub secrets: `SPARKLE_PRIVATE_KEY`, `MACOS_CERTIFICATE_P12` + `MACOS_CERTIFICATE_PASSWORD` (your *Developer ID Application* certificate exported from Keychain Access as .p12), and `NOTARY_KEY_P8` / `NOTARY_KEY_ID` / `NOTARY_ISSUER_ID` (an App Store Connect API key, for notarizing).
+
+Local builds (**Build Mac App.command**) pick up your Developer ID from the keychain automatically and turn Sparkle on once `sparkle_public_key.txt` exists; `NOTARY_PROFILE=confidence packaging/build_macos.sh` also notarizes. Without a Developer ID they're signed ad hoc and use the download check.
+
+#### Publishing a release
 
 ```bash
 python3 packaging/bump_version.py minor      # or patch / major — moves "Unreleased" notes under the new version
-git add -A && git commit -m "Confidence 0.5.0"
-git tag v0.5.0 && git push && git push --tags
+git add -A && git commit -m "Confidence 0.7.0"
+git tag v0.7.0 && git push && git push --tags
 ```
 
-The tag starts the GitHub workflow: it builds macOS (Apple silicon and Intel), Windows and Linux, then publishes a **Release** with the four files and that version's notes from CHANGELOG.md. Releases are public and permanent, unlike Actions artifacts.
+The tag starts the GitHub workflow: it builds macOS (Apple silicon and Intel; signed, notarized and stapled when the secrets are set), Windows and Linux; makes Sparkle's feeds (`appcast-arm64.xml`, `appcast-x86_64.xml`) and deltas from the previous three releases (`packaging/make_appcast.sh`); and publishes a **Release** with everything and that version's notes from CHANGELOG.md. The app's update feed is `releases/latest/download/appcast-<arch>.xml`, so the newest release is always the one offered.
 
 ## Limitimer viewer (older single-window app)
 

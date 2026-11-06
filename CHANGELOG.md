@@ -6,6 +6,15 @@ Built apps also carry a build number (date and time of the build), shown in **Ab
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-11-05
+
+### Added
+- **In-app updates on the Mac with Sparkle.** Signed release builds update themselves: Check for Updates shows what's new and Install Update downloads, verifies and installs it on relaunch — as a **delta** (only what changed, usually a few MB) when one is available. Windows, Linux and unsigned builds keep the download check.
+- Developer ID signing, notarization and stapling in the Mac build (picked up from your keychain locally; from encrypted secrets on GitHub), a `.zip` update archive next to the `.dmg`, and Sparkle appcasts + deltas on every release (`packaging/make_appcast.sh`). One-time setup: `packaging/setup_signing.sh`.
+
+### Changed
+- The Mac bundle version is now version + build (e.g. `0.7.0.20261106.0930`), so a release always counts as newer than a local build of an older version.
+
 ## [0.6.1] — 2026-11-05
 
 ### Fixed

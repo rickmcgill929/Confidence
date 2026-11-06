@@ -2,7 +2,9 @@
 # Runs on version tags (v*) or by hand from the Actions tab. The builds are
 # attached to the run as artifacts; for a version tag they're also published as
 # a GitHub Release (with that version's CHANGELOG notes), which is what the
-# app's "Check for Updates" looks at.
+# app's "Check for Updates" looks at. With the signing secrets set, the Mac app is
+# Developer ID signed and notarized, and the release carries Sparkle's appcasts and
+# delta updates so it updates itself (see packaging/setup_signing.sh).
 name: Build Confidence
 
 on:
@@ -16,16 +18,49 @@ jobs:
       matrix:
         runner: [macos-15, macos-15-intel]     # Apple silicon, Intel
     runs-on: ${{ matrix.runner }}
+    env:
+      # Developer ID signing + notarization + Sparkle when the secrets are set (packaging/setup_signing.sh);
+      # otherwise the app is signed ad hoc and updates by download.
+      HAVE_SIGNING: ${{ secrets.MACOS_CERTIFICATE_P12 != '' }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - run: PYTHON="$(which python)" packaging/build_macos.sh
+      - name: Developer ID certificate and notary key
+        if: env.HAVE_SIGNING == 'true'
+        env:
+          P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          P12_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          NOTARY_KEY_P8: ${{ secrets.NOTARY_KEY_P8 }}
+        run: |
+          KC="$RUNNER_TEMP/signing.keychain-db"
+          KCPW="$(uuidgen)"
+          security create-keychain -p "$KCPW" "$KC"
+          security set-keychain-settings -lut 21600 "$KC"
+          security unlock-keychain -p "$KCPW" "$KC"
+          echo "$P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KC" -P "$P12_PASSWORD" -T /usr/bin/codesign
+          rm -f "$RUNNER_TEMP/cert.p12"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KCPW" "$KC" > /dev/null
+          security list-keychains -d user -s "$KC" $(security list-keychains -d user | tr -d '"')
+          security find-identity -v -p codesigning "$KC"
+          if [ -n "$NOTARY_KEY_P8" ]; then
+            printf '%s\n' "$NOTARY_KEY_P8" > "$RUNNER_TEMP/notary.p8"
+            echo "NOTARY_KEY_PATH=$RUNNER_TEMP/notary.p8" >> "$GITHUB_ENV"
+          fi
+      - name: Build
+        env:
+          ADHOC: ${{ env.HAVE_SIGNING != 'true' && '1' || '' }}
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+        run: PYTHON="$(which python)" packaging/build_macos.sh
       - uses: actions/upload-artifact@v6
         with:
           name: Confidence-macOS-${{ runner.arch }}
-          path: dist/*.dmg
+          path: |
+            dist/*.dmg
+            dist/*.zip
 
   windows:
     runs-on: windows-latest
@@ -55,9 +90,34 @@ jobs:
           name: Confidence-Linux-x86_64
           path: dist/*.tar.gz
 
+  appcast:
+    # Sparkle's update feeds and delta updates (needs the SPARKLE_PRIVATE_KEY secret; skipped without it)
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [macos]
+    runs-on: macos-15
+    env:
+      SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: Confidence-macOS-*
+          path: mac
+          merge-multiple: true
+      - name: Appcasts and deltas
+        if: env.SPARKLE_PRIVATE_KEY != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: packaging/make_appcast.sh "$GITHUB_REF_NAME" mac sparkle
+      - uses: actions/upload-artifact@v6
+        with:
+          name: Confidence-appcast
+          path: sparkle/*
+          if-no-files-found: ignore
+
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [macos, windows, linux]
+    needs: [macos, windows, linux, appcast]
     runs-on: ubuntu-latest
     permissions:
       contents: write
