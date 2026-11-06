@@ -6,7 +6,11 @@ Built apps also carry a build number (date and time of the build), shown in **Ab
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-11-05
+
 ### Added
+- **Check for updates**: Help → Check for Updates… and a daily check at launch (can be turned off). Shows the release notes and downloads the right file for the computer — Mac (Apple silicon / Intel), Windows or Linux. Library: `dsan.updates`.
+- Pushing a version tag (`v0.5.0`) now publishes a GitHub Release with the four builds and that version's changelog notes.
 - Linux build: `packaging/build_linux.sh` makes `Confidence-<version>-Linux-<arch>.tar.gz` (app folder, icon, desktop entry, `install.sh`), and the GitHub workflow builds it on Ubuntu 22.04.
 
 ### Fixed

@@ -334,6 +334,20 @@ That creates `dist/Confidence.app` and `dist/Confidence-<version>-macOS-<arch>.d
 - **GitHub:** `.github/workflows/build-clock.yml` builds all four (macOS Apple silicon, macOS Intel, Windows, Linux x86_64) on a `v*` tag or by hand. GitHub's builds have no DeckLink output (the SDK isn't there); build locally for SDI.
 - The packaged app and `confidence` share their settings (`TRUCUE / Confidence`), so switching between them keeps your ports and layouts. On first launch Confidence copies over anything an earlier version (TruTime or DSAN Viewer) had saved.
 
+### Updates and releases
+
+Confidence checks GitHub for a newer release once a day, a few seconds after launch (turn it off under **Help → Check for Updates Automatically**), or any time from **Help → Check for Updates…** (in the Confidence menu on a Mac). When there is one you see its release notes and a **Download** button for the right file for that computer; installing is up to you, as for the first install. **Skip This Version** stops the reminders for that release. The check sends nothing but the app's version, and works without a GitHub account.
+
+To publish a release (this is what the update check finds):
+
+```bash
+python3 packaging/bump_version.py minor      # or patch / major — moves "Unreleased" notes under the new version
+git add -A && git commit -m "Confidence 0.5.0"
+git tag v0.5.0 && git push && git push --tags
+```
+
+The tag starts the GitHub workflow: it builds macOS (Apple silicon and Intel), Windows and Linux, then publishes a **Release** with the four files and that version's notes from CHANGELOG.md. Releases are public and permanent, unlike Actions artifacts.
+
 ## Limitimer viewer (older single-window app)
 
 `dsan-viewer` is the PyQt6 app: four program displays, DIP switch readout, the Perfect Cue panel, OSC output, a debug console, and Demo mode (the simulator). Its port fields accept `socket://host:port` too.

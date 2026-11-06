@@ -19,12 +19,13 @@ import threading
 import time
 from typing import Dict, List, Optional
 
-from PyQt6.QtCore import QObject, QSettings, QSize, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QAction, QColor, QFontDatabase, QGuiApplication, QKeySequence
+from PyQt6.QtCore import QObject, QSettings, QSize, Qt, QTimer, QUrl, pyqtSignal
+from PyQt6.QtGui import QAction, QColor, QDesktopServices, QFontDatabase, QGuiApplication, QKeySequence
 from PyQt6.QtWidgets import (
-    QApplication, QCheckBox, QColorDialog, QComboBox, QDoubleSpinBox, QFormLayout, QGridLayout,
+    QApplication, QCheckBox, QColorDialog, QComboBox, QDialog, QDoubleSpinBox, QFormLayout, QGridLayout,
     QGroupBox, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMainWindow,
-    QMenu, QMessageBox, QPushButton, QScrollArea, QSpinBox, QSplitter, QToolButton, QVBoxLayout, QWidget,
+    QMenu, QMessageBox, QPushButton, QScrollArea, QSpinBox, QSplitter, QTextBrowser, QToolButton, QVBoxLayout,
+    QWidget,
 )
 
 from .. import __version__
@@ -125,6 +126,7 @@ class Signals(QObject):
     osc_press = pyqtSignal(object)
     mm_message = pyqtSignal(str, object, bool)
     osc_message = pyqtSignal(str, object, str)
+    update_result = pyqtSignal(object, object, bool)     # UpdateInfo | None, error text | None, manual
 
 
 # ── small widgets ───────────────────────────────────────────────────────────────
@@ -489,7 +491,7 @@ class ControlWindow(QMainWindow):
             self.show_whats_new()
 
     def whats_new_dialog(self):
-        from PyQt6.QtWidgets import QDialog, QDialogButtonBox, QTextBrowser
+        from PyQt6.QtWidgets import QDialogButtonBox
         dlg = QDialog(self)
         dlg.setWindowTitle(f"What's new — Confidence {__version__}")
         dlg.resize(640, 560)
@@ -561,6 +563,19 @@ class ControlWindow(QMainWindow):
         whats_new = QAction("What's new", self)
         whats_new.triggered.connect(self.show_whats_new)
         help_menu.addAction(whats_new)
+        help_menu.addSeparator()
+        self.update_action = QAction("Check for Updates…", self)
+        self.update_action.setMenuRole(QAction.MenuRole.ApplicationSpecificRole)   # macOS: app menu
+        self.update_action.triggered.connect(lambda: self.check_for_updates(manual=True))
+        help_menu.addAction(self.update_action)
+        self.auto_update_action = QAction("Check for Updates Automatically", self)
+        self.auto_update_action.setCheckable(True)
+        self.auto_update_action.setChecked(True)
+        self.auto_update_action.toggled.connect(lambda on: self.settings.setValue("updates/auto", on))
+        help_menu.addAction(self.auto_update_action)
+        self.sig.update_result.connect(self._on_update_result)
+        self.update_info = None
+        self._update_running = False
 
         devices_menu = self.menuBar().addMenu("Devices")
         self.detect_action = QAction("Detect adapters", self)
@@ -2046,6 +2061,97 @@ class ControlWindow(QMainWindow):
         if s.value("output/visible", True, type=bool):
             QTimer.singleShot(0, lambda: self.show_output_btn.setChecked(True))
         self.decklink_panel.load(s)
+        self.auto_update_action.setChecked(s.value("updates/auto", True, type=bool))
+        if self._auto_update_due():
+            QTimer.singleShot(4000, lambda: self.check_for_updates(manual=False))
+
+    # ── updates ─────────────────────────────────────────────────────────────────
+
+    UPDATE_INTERVAL = 24 * 3600
+
+    def _auto_update_due(self) -> bool:
+        if not self.auto_update_action.isChecked():
+            return False
+        if os.environ.get("QT_QPA_PLATFORM") == "offscreen" or os.environ.get("CONFIDENCE_NO_UPDATE_CHECK"):
+            return False                                   # tests, smoke test, headless runs
+        last = self.settings.value("updates/last_check", 0.0, type=float)
+        return time.time() - last >= self.UPDATE_INTERVAL
+
+    def check_for_updates(self, manual: bool = True):
+        """Ask GitHub for the latest release on a background thread; the answer arrives on the GUI thread."""
+        if self._update_running:
+            return
+        self._update_running = True
+        self.update_action.setEnabled(False)
+        from .. import updates
+
+        def work():
+            try:
+                self.sig.update_result.emit(updates.check(), None, manual)
+            except updates.UpdateError as e:
+                self.sig.update_result.emit(None, str(e), manual)
+            except Exception as e:                         # never let a check crash the app
+                self.sig.update_result.emit(None, f"Update check failed: {e}", manual)
+        threading.Thread(target=work, name="confidence-update-check", daemon=True).start()
+
+    def _on_update_result(self, info, error, manual: bool):
+        self._update_running = False
+        self.update_action.setEnabled(True)
+        if error:
+            if manual:
+                QMessageBox.information(self, "Check for Updates", error)
+            return
+        self.settings.setValue("updates/last_check", time.time())
+        self.update_info = info
+        if info.available:
+            self.version_label.setText(f"v{ver.version_string()}  ·  {info.latest} available")
+            self.version_label.setStyleSheet("color: #FFB000;")
+            self.version_label.setToolTip(f"Confidence {info.latest} is available — Help → Check for Updates…")
+            if manual or self.settings.value("updates/skip", "", type=str) != info.latest:
+                self.update_dialog(info).exec()
+        elif manual:
+            QMessageBox.information(self, "Check for Updates",
+                                    f"You're up to date.\n\nConfidence {info.current} is the newest version.")
+
+    def update_dialog(self, info) -> QDialog:
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Update available")
+        dlg.resize(560, 460)
+        v = QVBoxLayout(dlg)
+        head = QLabel(f"<b>Confidence {info.latest} is available</b> — you have {info.current}."
+                      + (f"<br><span style='color:#8A8A8A'>Released {info.published}</span>" if info.published else ""))
+        v.addWidget(head)
+        notes = QTextBrowser()
+        notes.setOpenExternalLinks(True)
+        notes.setMarkdown(info.notes or "_No release notes._")
+        v.addWidget(notes, 1)
+        if info.asset is None:
+            hint = QLabel("There's no download for this computer in this release — the release page has the files.")
+            hint.setObjectName("dim")
+            hint.setWordWrap(True)
+            v.addWidget(hint)
+        row = QHBoxLayout()
+        skip = QPushButton("Skip This Version")
+        later = QPushButton("Later")
+        page = QPushButton("Release Page")
+        download = QPushButton(f"Download {info.asset.name}" if info.asset else "Download…")
+        download.setDefault(True)
+        dlg.download_button, dlg.skip_button = download, skip
+
+        def open_and_close(url):
+            QDesktopServices.openUrl(QUrl(url))
+            dlg.accept()
+        download.clicked.connect(lambda: open_and_close(info.download_url))
+        page.clicked.connect(lambda: open_and_close(info.page_url))
+        skip.clicked.connect(lambda: (self.settings.setValue("updates/skip", info.latest), dlg.reject()))
+        later.clicked.connect(dlg.reject)
+        row.addWidget(skip)
+        row.addStretch()
+        row.addWidget(later)
+        row.addWidget(page)
+        row.addWidget(download)
+        v.addLayout(row)
+        return dlg
 
     def _save_settings(self):
         s = self.settings
