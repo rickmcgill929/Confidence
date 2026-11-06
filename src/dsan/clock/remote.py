@@ -9,6 +9,7 @@ through :class:`Invoker`, using the same code paths as the app's own controls.
     GET  /api/state        everything the page shows (JSON)
     GET  /api/preview.png  the current output, rendered (?w=640)
     POST /api/action       {"action": "...", ...} — see RemoteAPI.ACTIONS
+                           ("decklink" drives the SDI output: device, mode, cut/fill, layout, on air)
 
 With a PIN set, every /api request needs it in an ``X-PIN`` header (the page asks
 once and remembers it in that browser).
@@ -122,6 +123,47 @@ class RemoteAPI:
             "trucue": {"enabled": w.tc_enable.isChecked(), "port": w.tc_port.value(),
                        "forward": w.tc_forward.text(), "yellow": w.tc_yellow.value(), "red": w.tc_red.value(),
                        "status": _status(w.tc_status)},
+            "decklink": self.decklink_state(),
+        }
+
+    # -- DeckLink SDI output ---------------------------------------------------------
+
+    def _dl_layouts(self) -> List[Dict[str, str]]:
+        """What the SDI output can show: the screen's layout, a preset, or a saved layout file."""
+        from .layout import PRESETS
+        items = [{"value": "same", "label": "Same as screen output"}]
+        items += [{"value": f"preset:{n}", "label": f"Preset: {n}"} for n in PRESETS]
+        items += [{"value": f"file:{f}", "label": f"File: {f[:-5]}"} for f in self.saved_layouts()]
+        current = self._dl_layout_value()
+        if not any(it["value"] == current for it in items):        # a file from another folder
+            items.append({"value": current, "label": f"File: {current[5:]}"})
+        return items
+
+    def _dl_layout_value(self) -> str:
+        choice = self.w.decklink_panel.layout_choice
+        return f"file:{os.path.basename(choice[5:])}" if choice.startswith("file:") else choice
+
+    def decklink_state(self) -> Dict[str, Any]:
+        p = self.w.decklink_panel
+        keying = []
+        model = p.keying_combo.model()
+        for i in range(p.keying_combo.count()):
+            keying.append({"value": str(p.keying_combo.itemData(i)), "label": p.keying_combo.itemText(i),
+                           "enabled": bool(model.item(i).isEnabled())})
+        return {
+            "available": bool(p.devices),
+            "reason": p.reason.text(),
+            "on_air": p.output is not None,
+            "devices": _combo_items(p.device_combo), "device": str(p.device_combo.currentData() or ""),
+            "modes": _combo_items(p.mode_combo),
+            "mode": "" if p.mode_combo.currentData() is None else str(p.mode_combo.currentData()),
+            "keyings": keying, "keying": str(p.keying_combo.currentData() or "none"),
+            "key_devices": _combo_items(p.key_combo), "key_device": str(p.key_combo.currentData() or ""),
+            "layouts": self._dl_layouts(), "layout": self._dl_layout_value(),
+            "premultiplied": p.premult.isChecked(),
+            "can_start": p.start_btn.isEnabled(),
+            "status": _status(p.status),
+            "warning": p.warning.text() if not p.warning.isHidden() else "",
         }
 
     def saved_layouts(self) -> List[str]:
@@ -135,7 +177,7 @@ class RemoteAPI:
     # -- actions ---------------------------------------------------------------
 
     ACTIONS = ("connect", "port", "demo", "message", "clear_message", "preset", "open_layout",
-               "output", "osc", "millumin", "trucue")
+               "output", "osc", "millumin", "trucue", "decklink")
 
     def act(self, data: Dict[str, Any]) -> Dict[str, Any]:
         name = data.get("action")
@@ -276,6 +318,73 @@ class RemoteAPI:
                 if "forward" in data:
                     w.tc_forward.setText(str(data["forward"]).strip())
             self._restart(w.tc_enable, apply, data)
+
+    @staticmethod
+    def _select_str(combo, value, what):
+        value = str(value)
+        i = next((i for i in range(combo.count()) if str(combo.itemData(i)) == value), -1)
+        if i < 0:
+            raise RemoteError(f"no such {what}: {value}")
+        combo.setCurrentIndex(i)
+
+    def _decklink(self, data):
+        """{device, mode, keying, key_device, layout, premultiplied, on, rescan} — all optional."""
+        from . import files
+        p = self.w.decklink_panel
+        if data.get("rescan"):
+            if p.output is not None:
+                raise RemoteError("Stop SDI output before re-scanning")
+            p.rescan()
+        if not p.devices and any(k in data for k in ("device", "mode", "keying", "key_device", "on")):
+            raise RemoteError(p.reason.text() or "No DeckLink outputs found")
+        routing = [k for k in ("device", "mode", "keying", "key_device") if k in data]
+        if routing and p.output is not None:
+            changed = any(str(data[k]) != self.decklink_state()[k] for k in routing)
+            if changed:
+                raise RemoteError("Stop SDI output to change the device, mode or cut/fill")
+        else:
+            if "device" in data:
+                self._select_str(p.device_combo, data["device"], "DeckLink device")   # refreshes modes
+            if "mode" in data:
+                self._select_str(p.mode_combo, data["mode"], "video mode")
+            if "keying" in data:
+                value = str(data["keying"])
+                i = p.keying_combo.findData(value)
+                if i < 0:
+                    raise RemoteError(f"no such cut/fill option: {value}")
+                if not p.keying_combo.model().item(i).isEnabled():
+                    raise RemoteError(f"{p.keying_combo.itemText(i)} isn't available with this device")
+                p.keying_combo.setCurrentIndex(i)
+            if "key_device" in data:
+                if str(data["key_device"]) == str(p.device_combo.currentData()):
+                    raise RemoteError("The key output must be a different device from the fill")
+                self._select_str(p.key_combo, data["key_device"], "key device")
+        if "layout" in data:
+            value = str(data["layout"])
+            if value != self._dl_layout_value():
+                if value == "same" or value.startswith("preset:"):
+                    from .layout import PRESETS
+                    if value != "same" and value[7:] not in PRESETS:
+                        raise RemoteError(f"no preset called {value[7:]!r}")
+                    p.set_layout_choice(value)
+                elif value.startswith("file:"):
+                    name = os.path.basename(value[5:])                      # only the layouts folder
+                    path = os.path.join(files.last_dir("layouts"), name)
+                    if not name.lower().endswith(".json") or not os.path.isfile(path):
+                        raise RemoteError(f"no saved layout called {name!r}")
+                    p.set_layout_choice(f"file:{path}")
+                else:
+                    raise RemoteError(f"no such layout: {value}")
+        if "premultiplied" in data:
+            p.premult.setChecked(bool(data["premultiplied"]))
+        if "on" in data:
+            if data["on"] and p.output is None:
+                if not p.start_btn.isEnabled():
+                    raise RemoteError(p.warning.text() or "Pick a device and video mode first")
+                if not p.start():
+                    raise RemoteError(p.status.text().lstrip("● ") or "Couldn't start SDI output")
+            elif not data["on"] and p.output is not None:
+                p.stop()
 
     # -- preview ---------------------------------------------------------------
 

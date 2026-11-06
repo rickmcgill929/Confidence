@@ -106,6 +106,23 @@ PAGE = r"""<!doctype html>
     <div class="row"><button id="showout">Show output</button></div>
   </section>
 
+  <section id="dl">
+    <h2>SDI output — DeckLink</h2>
+    <div class="note" id="dl_reason"></div>
+    <div id="dl_body">
+      <div class="row"><label for="dl_device">Device</label><select class="grow" id="dl_device"></select></div>
+      <div class="row"><label for="dl_mode">Video mode</label><select class="grow" id="dl_mode"></select></div>
+      <div class="row"><label for="dl_keying">Cut / fill</label><select class="grow" id="dl_keying"></select></div>
+      <div class="row" id="dl_keyrow"><label for="dl_key">Key output</label><select class="grow" id="dl_key"></select></div>
+      <div class="row"><label for="dl_layout">Layout</label><select class="grow" id="dl_layout"></select></div>
+      <div class="row" id="dl_premultrow"><label></label><label class="switch"><input type="checkbox" id="dl_premult"> Premultiplied fill</label></div>
+      <div class="row"><button id="dl_onair" type="button">Start SDI output</button>
+        <button id="dl_rescan" type="button" title="Re-scan DeckLink devices">⟳ Re-scan</button></div>
+    </div>
+    <div class="status" id="dl_status"></div>
+    <div class="status" id="dl_warning" style="color: var(--yellow)"></div>
+  </section>
+
   <section>
     <h2>Inputs</h2>
     <div id="inputs"></div>
@@ -247,6 +264,29 @@ function render(s) {
   setVal($("osc_send"), osc.send); setVal($("osc_target"), osc.target); setVal($("osc_prefix"), osc.prefix);
   setVal($("osc_receive"), osc.receive); setVal($("osc_port"), osc.port);
   setStatus($("osc_status"), osc.receive ? osc.status : { text: osc.send ? "sending" : "off" });
+  // DeckLink
+  const k = s.decklink;
+  $("dl_reason").textContent = k.reason;
+  $("dl_body").style.display = k.available ? "" : "none";
+  if (k.available) {
+    fillSelect($("dl_device"), k.devices, k.device);
+    fillSelect($("dl_mode"), k.modes, k.mode);
+    fillSelect($("dl_keying"), k.keyings, k.keying);
+    for (const o of $("dl_keying").options) { const it = k.keyings.find((x) => x.value === o.value); o.disabled = !!it && !it.enabled; }
+    fillSelect($("dl_key"), k.key_devices, k.key_device);
+    fillSelect($("dl_layout"), k.layouts, k.layout);
+    $("dl_keyrow").style.display = k.keying === "separate" ? "" : "none";
+    setVal($("dl_premult"), k.premultiplied);
+    $("dl_premult").disabled = k.keying === "none";
+    for (const id of ["dl_device", "dl_mode", "dl_keying", "dl_key"]) $(id).disabled = k.on_air;
+    $("dl_rescan").disabled = k.on_air;
+    const b = $("dl_onair");
+    b.textContent = k.on_air ? "Stop SDI output" : "Start SDI output";
+    b.className = k.on_air ? "on" : "primary";
+    b.disabled = !k.on_air && !k.can_start;
+  }
+  setStatus($("dl_status"), k.status);
+  $("dl_warning").textContent = k.warning;
 }
 
 // controls
@@ -262,6 +302,18 @@ $("mm_enabled").addEventListener("change", (e) => act({ action: "millumin", enab
 $("tc_enabled").addEventListener("change", (e) => act({ action: "trucue", enabled: e.target.checked }));
 $("osc_send").addEventListener("change", (e) => act({ action: "osc", send: e.target.checked }));
 $("osc_receive").addEventListener("change", (e) => act({ action: "osc", receive: e.target.checked }));
+$("dl_device").addEventListener("change", (e) => act({ action: "decklink", device: e.target.value }));
+$("dl_mode").addEventListener("change", (e) => act({ action: "decklink", mode: e.target.value }));
+$("dl_keying").addEventListener("change", (e) => act({ action: "decklink", keying: e.target.value }));
+$("dl_key").addEventListener("change", (e) => act({ action: "decklink", key_device: e.target.value }));
+$("dl_layout").addEventListener("change", (e) => act({ action: "decklink", layout: e.target.value }));
+$("dl_premult").addEventListener("change", (e) => act({ action: "decklink", premultiplied: e.target.checked }));
+$("dl_rescan").addEventListener("click", () => act({ action: "decklink", rescan: true }));
+$("dl_onair").addEventListener("click", () => {
+  const on = !state.decklink.on_air;
+  if (!on && !confirm("Take the SDI output off air?")) return;
+  act({ action: "decklink", on });
+});
 for (const b of document.querySelectorAll("[data-apply]")) b.addEventListener("click", () => {
   const k = b.dataset.apply;
   if (k === "millumin") act({ action: "millumin", port: +$("mm_port").value, layer: $("mm_layer").value, yellow: +$("mm_yellow").value, red: +$("mm_red").value });

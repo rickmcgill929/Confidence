@@ -6,6 +6,11 @@ Built apps also carry a build number (date and time of the build), shown in **Ab
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-11-06
+
+### Added
+- **DeckLink SDI output in the browser remote.** Pick the device, video mode, cut/fill (hardware keyer or separate key output), what layout goes out on SDI (same as screen, a preset or a saved layout) and premultiplied fill; start and stop the SDI output (stopping asks first); re-scan devices. Shows the same on-air status and warnings as the app. Device, mode and cut/fill are locked while on air; the layout can change live.
+
 ## [0.7.2] — 2026-11-06
 
 ### Fixed

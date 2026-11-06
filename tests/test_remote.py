@@ -90,6 +90,9 @@ def test_page_state_and_actions(qapp, window, tmp_path):
     code, st = c.request("/api/state")
     assert code == 200 and st["app"]["name"] == "Confidence" and "TruCue countdown" in st["layout"]["presets"]
     assert st["inputs"]["lt"]["name"] == "Limitimer" and st["output"]["modes"]
+    assert set(st["decklink"]) >= {"available", "reason", "on_air", "status"}      # no card here
+    if not st["decklink"]["available"]:
+        assert c.act(action="decklink", on=True)[0] == 400
 
     # message
     code, st = c.act(action="message", text="  5 MINUTES  ")

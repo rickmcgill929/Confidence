@@ -208,3 +208,58 @@ def test_control_window_decklink_panel(dl, qapp_dl, monkeypatch):
     assert w2.decklink_panel.output is not None and w2.decklink_panel.layout_choice == "preset:Corner overlay"
     w2.close()
     QSettings("TRUCUE", "DSANClockDL").clear()
+
+
+def test_remote_controls_decklink(dl, qapp_dl, monkeypatch, tmp_path):
+    """The browser remote drives the SDI panel: device, mode, cut/fill, layout, on air."""
+    from PyQt6.QtCore import QSettings
+    import dsan.clock.app as appmod
+    from dsan.clock import files
+    from dsan.clock.remote import RemoteAPI, RemoteError
+    mod, fake = dl
+    real = appmod.QSettings
+    QSettings("TRUCUE", "DSANClockDLRemote").clear()
+    monkeypatch.setattr(appmod, "QSettings", lambda *_a: real("TRUCUE", "DSANClockDLRemote"))
+    monkeypatch.setattr(files, "last_dir", lambda kind: str(tmp_path))
+    w = appmod.ControlWindow()
+    api = RemoteAPI(w)
+    p = w.decklink_panel
+    st = api.state()["decklink"]
+    assert st["available"] and not st["on_air"] and len(st["devices"]) == 2
+    assert {k["value"]: k["enabled"] for k in st["keyings"]}["separate"] is True
+
+    mode720 = next(m["value"] for m in st["modes"] if m["label"].startswith("720p59.94"))
+    st = api.act({"action": "decklink", "mode": mode720, "keying": "external"})["decklink"]
+    assert st["mode"] == mode720 and st["keying"] == "external" and "opaque" in st["warning"]
+    st = api.act({"action": "decklink", "layout": "preset:Corner overlay", "premultiplied": True})["decklink"]
+    assert st["layout"] == "preset:Corner overlay" and st["premultiplied"] and not st["warning"]
+
+    w.layout_obj.save(str(tmp_path / "SDI look.json"))
+    st = api.state()["decklink"]
+    assert {"value": "file:SDI look.json", "label": "File: SDI look"} in st["layouts"]
+    for bad in ({"layout": "file:../x.json"}, {"layout": "preset:Nope"}, {"layout": "zzz"},
+                {"mode": "123456"}, {"device": "Nope"}, {"keying": "nope"}):
+        with pytest.raises(RemoteError):
+            api.act({"action": "decklink", **bad})
+
+    st = api.act({"action": "decklink", "on": True})["decklink"]
+    assert st["on_air"] and p.output is not None and fake.fake_keyer(0) == 2
+    p.update_status()
+    assert "on air" in api.state()["decklink"]["status"]["text"]
+    with pytest.raises(RemoteError, match="Stop SDI output"):
+        api.act({"action": "decklink", "mode": next(m["value"] for m in st["modes"] if m["value"] != mode720)})
+    api.act({"action": "decklink", "mode": mode720, "on": True})          # same values while on air: fine
+    st = api.act({"action": "decklink", "layout": "file:SDI look.json"})["decklink"]   # layout can change on air
+    assert st["layout"] == "file:SDI look.json" and p.output is not None
+    with pytest.raises(RemoteError):
+        api.act({"action": "decklink", "rescan": True})
+    st = api.act({"action": "decklink", "on": False})["decklink"]
+    assert not st["on_air"] and not fake.fake_playing(0)
+
+    st = api.act({"action": "decklink", "keying": "separate"})["decklink"]
+    assert st["key_device"] != st["device"]
+    with pytest.raises(RemoteError, match="different device"):
+        api.act({"action": "decklink", "key_device": st["device"]})
+    api.act({"action": "decklink", "rescan": True})
+    w.close()
+    QSettings("TRUCUE", "DSANClockDLRemote").clear()
