@@ -6,6 +6,11 @@ Built apps also carry a build number (date and time of the build), shown in **Ab
 
 ## [Unreleased]
 
+## [0.11.0] — 2026-11-08
+
+### Added
+- **New preset: Limitimer + TruCue.** The same look as *Limitimer + Millumin*, with TRUCUE in the lower half: clip number, TRT, play state, countdown to OUT and clip name. The lower half empties when no clip is loaded.
+
 ## [0.10.0] — 2026-11-08
 
 ### Added

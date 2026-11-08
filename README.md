@@ -282,7 +282,7 @@ If the debug console shows bytes that aren't button codes (Perfect Cue) or **Dev
 **Layouts**
 - Elements: timer digits, phase lights, Perfect Cue indicator (◁ ● ▷ arrows, full-screen colour light, an outline frame whose width you set in output pixels, or text — green for NEXT, red for PREV, yellow while blanked), progress bar, time of day, labels (`{program}`, `{mode}` tokens) and an operator message.
 - Every element has its own colours, background with alpha, corner radius, font and alignment. Timers follow the Limitimer's selected program or a fixed program, and overtime and DIP 2/3 format are set per element.
-- Presets: *Confidence monitor*, *Corner overlay*, *Cue light*, *Cue frame* (a frame round the whole screen), *Timer + time of day*, *All four programs*, *Millumin countdown*, *Limitimer + Millumin* (both at once, with a Perfect Cue frame), *TruCue countdown*.
+- Presets: *Confidence monitor*, *Corner overlay*, *Cue light*, *Cue frame* (a frame round the whole screen), *Timer + time of day*, *All four programs*, *Millumin countdown*, *Limitimer + Millumin* (both at once, with a Perfect Cue frame), *TruCue countdown*, *Limitimer + TruCue* (the same, with TRUCUE in the lower half).
 - Layouts save as JSON. Custom `.ttf`/`.otf` fonts can be bundled with a layout.
 - Digits are drawn in fixed-width cells, so a running clock never shifts sideways, whatever the font.
 

@@ -418,6 +418,35 @@ def preset_limitimer_millumin() -> Layout:
     ])
 
 
+def preset_limitimer_trucue() -> Layout:
+    """Both at once: the Limitimer on top, the TruCue clip below, and a Perfect Cue
+    frame round the screen, on black."""
+    return Layout("Limitimer + TruCue", "#000000", [
+        _e("cue", 0.0, 0.0, 1.0, 1.0,
+           cue_style="frame", frame_px=30, name="Perfect Cue indicator"),
+        _e("label", 0.03, 0.8696, 0.94, 0.125,
+           color="#8A8A8A", source="trucue", text="{tc_clip}", name="TruCue Clip Name"),
+        _e("timer", 0.03, 0.5696, 0.94, 0.3,
+           source="trucue", overtime=False, name="TruCue Countdown"),
+        _e("label", 0.6322, 0.4596, 0.1756, 0.11,
+           color="#4A8CFF", source="trucue", text="{tc_trt}", name="TruCue TRT"),
+        _e("label", 0.03, 0.4596, 0.255, 0.11,
+           color="#FF9300", align="left", source="trucue", text="TruCue", name="TruCue Label"),
+        _e("label", 0.8078, 0.4596, 0.1622, 0.11,
+           color="#8A8A8A", source="trucue", text="{tc_state}", name="TruCue State"),
+        _e("label", 0.285, 0.4596, 0.3472, 0.11,
+           color="#8A8A8A", source="trucue", text="{tc_index}", name="TruCue Clip #"),
+        _e("label", 0.285, 0.01, 0.435, 0.11,
+           color="#4A8CFF", text="{program}", name="DSAN Program #"),
+        _e("timer", 0.03, 0.12, 0.94, 0.3,
+           name="DSAN Timer digits"),
+        _e("clock", 0.72, 0.01, 0.25, 0.11,
+           align="right", name="Time of Day"),
+        _e("label", 0.03, 0.01, 0.255, 0.11,
+           color="#FF9300", align="left", text="Limitimer", name="Limitimer Label"),
+    ])
+
+
 def preset_trucue() -> Layout:
     """TruCue playback: clip, a big countdown to OUT, progress, next bookmark and next clip."""
     return Layout("TruCue countdown", "#000000", [
@@ -441,6 +470,7 @@ PRESETS = {
     "All four programs": preset_four_programs,
     "Millumin countdown": preset_millumin,
     "Limitimer + Millumin": preset_limitimer_millumin,
+    "Limitimer + TruCue": preset_limitimer_trucue,
     "TruCue countdown": preset_trucue,
 }
 

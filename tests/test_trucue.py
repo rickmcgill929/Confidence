@@ -159,3 +159,41 @@ def test_app_trucue_box(qapp, monkeypatch):
     assert w2.tc_enable.isChecked() and w2.tc_port.value() == port
     w2.close()
     QSettings("TRUCUE", "ConfTestTC").clear()
+
+
+def test_limitimer_trucue_preset(qapp):
+    """Same look as Limitimer + Millumin, fed by TRUCUE; the lower half empties with no clip."""
+    from PyQt6.QtCore import QRectF
+    from PyQt6.QtGui import QImage, QPainter
+    from dsan.clock.layout import PRESETS, expand_tokens
+    from dsan.clock.render import Frame, Renderer
+    from dsan.devices import LinkState
+    from dsan.limitimer import LimitimerState, Program
+    tc, mm = PRESETS["Limitimer + TruCue"](), PRESETS["Limitimer + Millumin"]()
+    assert [(e.type, e.x, e.y, e.w, e.h, e.color) for e in tc.elements] == \
+           [(e.type, e.x, e.y, e.w, e.h, e.color) for e in mm.elements]
+    assert tc.background == "#000000" and all(e.source in ("trucue", "selected") for e in tc.elements)
+    t = TruCueTracker()
+    t.handle("/trucue/status", status(clip="Keynote", remaining=200.0), now=0)
+    t.handle("/trucue/status", status(clip="Keynote", remaining=90.0), now=1)
+    v = t.view(now=1)
+    texts = {e.name: expand_tokens(e.text, None, None, trucue=v) for e in tc.elements if e.type == "label"}
+    assert texts["TruCue Clip Name"] == "Keynote" and texts["TruCue TRT"] == "3:20"
+    assert texts["TruCue State"] == "PLAYING" and texts["TruCue Label"] == "TruCue"
+    assert texts["TruCue Clip #"] == str(v.index)
+    st = LimitimerState(programs=(Program(1, 1, 300, 30, 100),), selected_index=0)
+
+    def render(view):
+        img = QImage(640, 360, QImage.Format.Format_ARGB32)
+        img.fill(0xFF000000)
+        p = QPainter(img)
+        Renderer().paint(p, QRectF(0, 0, 640, 360), tc, Frame(state=st, link=LinkState.LIVE, trucue=view, now=1))
+        p.end()
+        return img
+
+    def lit(img, y0, y1):
+        return sum(1 for y in range(int(360 * y0), int(360 * y1), 3) for x in range(30, 610, 3)
+                   if img.pixelColor(x, y).lightness() > 60)
+    full, empty = render(v), render(None)
+    assert lit(full, 0.13, 0.41) > 100 and lit(empty, 0.13, 0.41) > 100      # Limitimer both times
+    assert lit(full, 0.58, 0.86) > 100 and lit(empty, 0.58, 0.86) == 0       # TruCue countdown only with a clip
