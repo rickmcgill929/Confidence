@@ -24,7 +24,7 @@ dependencies = ["pyserial>=3.5"]
 osc = ["python-osc>=1.8"]
 server = ["aiohttp>=3.9"]
 viewer = ["PyQt6>=6.5", "python-osc>=1.8"]
-clock = ["PyQt6>=6.5", "python-osc>=1.8", "certifi>=2024.2", "pyobjc-framework-Cocoa>=9; sys_platform == 'darwin'"]
+clock = ["PyQt6>=6.5", "python-osc>=1.8", "certifi>=2024.2", "zeroconf>=0.132", "pyobjc-framework-Cocoa>=9; sys_platform == 'darwin'"]
 all = ["python-osc>=1.8", "aiohttp>=3.9", "PyQt6>=6.5", "certifi>=2024.2", "pyobjc-framework-Cocoa>=9; sys_platform == 'darwin'"]
 dev = ["pytest>=7", "python-osc>=1.8", "aiohttp>=3.9"]
 

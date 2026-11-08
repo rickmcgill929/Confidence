@@ -6,6 +6,15 @@ Built apps also carry a build number (date and time of the build), shown in **Ab
 
 ## [Unreleased]
 
+## [0.10.0] — 2026-11-08
+
+### Added
+- **New preset: Limitimer + Millumin.** The Limitimer (program, digits, time of day) on top, the current Millumin clip below (column, TRT, play state, countdown, clip name), and a Perfect Cue frame round the screen, on a black background.
+- **Open the remote at `http://confidence.local:8080`.** Confidence announces itself on the network with Bonjour/mDNS, so phones, tablets and computers can use a name instead of an IP address. New **Name** field in the REMOTE box for running more than one Confidence (e.g. `stage-left.local`); if the name is already taken on the network, `-2` is added. Re-announced automatically when the network changes. Port 80 is now allowed, for an address without `:8080`.
+
+### Changed
+- The REMOTE box no longer lists names like `Mac.localdomain` that only work on the Mac itself.
+
 ## [0.9.0] — 2026-11-06
 
 ## [0.8.0] — 2026-11-06

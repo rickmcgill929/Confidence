@@ -195,3 +195,47 @@ def test_port_in_use_and_settings(qapp, window, monkeypatch):
     assert w.remote is None
     with pytest.raises(OSError):                                            # really closed
         socket.create_connection(("127.0.0.1", port), timeout=0.5)
+
+
+def test_clean_name():
+    from dsan.clock.bonjour import clean_name
+    assert clean_name("Confidence") == "confidence"
+    assert clean_name(" Stage Left! ") == "stage-left"
+    assert clean_name("") == clean_name("---") == "confidence"
+    assert len(clean_name("x" * 99)) == 40
+
+
+def test_announced_as_confidence_local(qapp, window):
+    pytest.importorskip("zeroconf")
+    from PyQt6.QtCore import QSettings
+    from zeroconf import AddressResolverIPv4, IPVersion, Zeroconf
+    w = window
+    w.remote_port.setValue(free_port())
+    w.remote_enable.setChecked(True)
+    assert w.bonjour is not None and "announcing confidence.local" in w.remote_status.text()
+    assert w.bonjour.wait(15), w.bonjour.error
+    w._update_remote()
+    assert f"http://confidence.local:{w.remote.port}" in w.remote_status.text()
+    assert "localdomain" not in w.remote_status.text()
+    zc = Zeroconf(ip_version=IPVersion.V4Only)
+    try:
+        found = False
+        for _ in range(3):
+            r = AddressResolverIPv4("confidence.local.")
+            if r.request(zc, 1000):
+                found = set(r.parsed_addresses()) <= set(w.bonjour.addresses)
+                break
+        assert found
+    finally:
+        zc.close()
+
+    w.remote_name.setText("Stage Left")                    # cleaned up, re-announced
+    w._remote_name_changed()
+    assert w.remote_name.text() == "stage-left" and w.bonjour.wait(15)
+    w._update_remote()
+    assert "http://stage-left.local:" in w.remote_status.text()
+    w._save_settings()
+    assert QSettings("TRUCUE", "ConfTestRemote").value("remote/name") == "stage-left"
+    b = w.bonjour
+    w.remote_enable.setChecked(False)
+    assert w.bonjour is None and b._closed.is_set()

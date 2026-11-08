@@ -282,7 +282,7 @@ If the debug console shows bytes that aren't button codes (Perfect Cue) or **Dev
 **Layouts**
 - Elements: timer digits, phase lights, Perfect Cue indicator (◁ ● ▷ arrows, full-screen colour light, an outline frame whose width you set in output pixels, or text — green for NEXT, red for PREV, yellow while blanked), progress bar, time of day, labels (`{program}`, `{mode}` tokens) and an operator message.
 - Every element has its own colours, background with alpha, corner radius, font and alignment. Timers follow the Limitimer's selected program or a fixed program, and overtime and DIP 2/3 format are set per element.
-- Presets: *Confidence monitor*, *Corner overlay*, *Cue light*, *Cue frame* (a frame round the whole screen), *Timer + time of day*, *All four programs*, *Millumin countdown*, *TruCue countdown*.
+- Presets: *Confidence monitor*, *Corner overlay*, *Cue light*, *Cue frame* (a frame round the whole screen), *Timer + time of day*, *All four programs*, *Millumin countdown*, *Limitimer + Millumin* (both at once, with a Perfect Cue frame), *TruCue countdown*.
 - Layouts save as JSON. Custom `.ttf`/`.otf` fonts can be bundled with a layout.
 - Digits are drawn in fixed-width cells, so a running clock never shifts sideways, whatever the font.
 
@@ -347,7 +347,9 @@ That creates `dist/Confidence.app` and `dist/Confidence-<version>-macOS-<arch>.d
 
 ### Remote control from a browser
 
-Tick **Allow control from a web browser** in the REMOTE box (default port 8080) and open the address it shows — e.g. `http://192.168.1.20:8080` — on a phone, tablet or another computer on the same network. No app or internet needed.
+Tick **Allow control from a web browser** in the REMOTE box (default port 8080) and open **`http://confidence.local:8080`** — or the IP address it also shows, e.g. `http://192.168.1.20:8080` — on a phone, tablet or another computer on the same network. No app or internet needed.
+
+The `.local` name is announced with Bonjour/mDNS (built into iPhone, iPad, Mac and Windows 10+; most Android phones from Android 12, otherwise use the IP address). Running more than one Confidence? Give each its own **Name** in the REMOTE box (`stage-left` → `http://stage-left.local:8080`); a name already in use gets `-2` added. Set the port to **80** for just `http://confidence.local` (on Linux, ports under 1024 need extra permission).
 
 The page shows a **live preview** of the output (about once a second) and lets you send and clear **presenter messages** (with the quick WRAP UP / 1 MINUTE / PLEASE STOP buttons), load a **preset or a saved layout** (from the layouts folder), set the **output** mode and display and show/hide it, pick each device's **adapter** and connect/disconnect it, switch **Demo** on/off, set up the **Millumin, TruCue and OSC** feeds, and run the **DeckLink SDI output** — device, video mode, cut/fill, SDI layout, premultiplied fill, start/stop (device, mode and cut/fill are locked while on air, as in the app). Editing a layout's elements stays in the app.
 

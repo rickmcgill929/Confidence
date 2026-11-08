@@ -19,8 +19,9 @@ import threading
 import time
 from typing import Dict, List, Optional
 
-from PyQt6.QtCore import QObject, QSettings, QSize, Qt, QTimer, QUrl, pyqtSignal
-from PyQt6.QtGui import QAction, QColor, QDesktopServices, QFontDatabase, QGuiApplication, QKeySequence
+from PyQt6.QtCore import QObject, QRegularExpression, QSettings, QSize, Qt, QTimer, QUrl, pyqtSignal
+from PyQt6.QtGui import QAction, QColor, QDesktopServices, QFontDatabase, QGuiApplication, QKeySequence, \
+    QRegularExpressionValidator
 from PyQt6.QtWidgets import (
     QApplication, QCheckBox, QColorDialog, QComboBox, QDialog, QDoubleSpinBox, QFormLayout, QGridLayout,
     QGroupBox, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMainWindow,
@@ -428,6 +429,7 @@ class ControlWindow(QMainWindow):
         self.mm_rx = None
         self.tc_rx = None
         self.remote = None
+        self.bonjour = None              # announces <name>.local for the remote page
         self._detecting = False
         self._port_infos: Dict[str, portsmod.PortInfo] = {}
         self.refs: Dict[str, Optional[portsmod.PortRef]] = {"lt": None, "pc": None}
@@ -1006,8 +1008,17 @@ class ControlWindow(QMainWindow):
                                       "computer on this network: preview, messages, layouts, output, inputs, feeds.")
         self.remote_enable.toggled.connect(self._rebuild_remote)
         self.remote_port = QSpinBox()
-        self.remote_port.setRange(1024, 65535)
+        self.remote_port.setRange(80, 65535)
         self.remote_port.setValue(8080)
+        self.remote_port.setToolTip("8080 works everywhere. 80 makes the address just http://confidence.local "
+                                    "(fine on a Mac; Linux needs extra permission for ports under 1024).")
+        self.remote_name = QLineEdit()
+        self.remote_name.setPlaceholderText("confidence")
+        self.remote_name.setMaxLength(40)
+        self.remote_name.setValidator(QRegularExpressionValidator(QRegularExpression(r"[A-Za-z0-9-]{0,40}")))
+        self.remote_name.setToolTip("The page is announced on the network as <name>.local (Bonjour). "
+                                    "Give each computer its own name if you run more than one Confidence.")
+        self.remote_name.editingFinished.connect(self._remote_name_changed)
         self.remote_pin = QLineEdit()
         self.remote_pin.setPlaceholderText("optional — recommended on shared networks")
         self.remote_pin.setMaxLength(32)
@@ -1018,12 +1029,14 @@ class ControlWindow(QMainWindow):
         self.remote_status.setOpenExternalLinks(True)
         self.remote_status.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
         form.addRow(self.remote_enable)
+        form.addRow("Name", self.remote_name)
         form.addRow("Port", self.remote_port)
         form.addRow("PIN", self.remote_pin)
         form.addRow(self.remote_status)
         return g
 
     def _rebuild_remote(self, *_):
+        self._stop_bonjour()
         if self.remote:
             self.remote.close()
             self.remote = None
@@ -1040,7 +1053,32 @@ class ControlWindow(QMainWindow):
             self.remote_enable.setChecked(False)
             self._status(self.remote_status, f"Can't use port {port}: {e.strerror or e} — pick another", "#FF3B3B")
             return
+        self._start_bonjour()
         self._update_remote()
+
+    def _start_bonjour(self):
+        from . import bonjour
+        from .remote import local_addresses
+        self._stop_bonjour()
+        if self.remote is None or not bonjour.available():
+            return
+        self.bonjour = bonjour.Announcer(self.remote_name.text() or bonjour.DEFAULT_NAME, self.remote.port,
+                                         local_addresses(names=False))
+
+    def _stop_bonjour(self):
+        if self.bonjour is not None:
+            self.bonjour.close()
+            self.bonjour = None
+
+    def _remote_name_changed(self):
+        from . import bonjour
+        text = self.remote_name.text()
+        if text and bonjour.clean_name(text) != text:
+            self.remote_name.setText(bonjour.clean_name(text))
+        if self.remote is not None and (self.bonjour is None or
+                                        self.bonjour.wanted != bonjour.clean_name(self.remote_name.text())):
+            self._start_bonjour()
+            self._update_remote()
 
     def _remote_pin_changed(self):
         if self.remote:
@@ -1051,7 +1089,22 @@ class ControlWindow(QMainWindow):
         r = self.remote
         if r is None:
             return
-        links = "<br>".join(f'<a href="{u}" style="color:#4A8CFF">{u}</a>' for u in r.urls()[:3])
+        from .remote import local_addresses
+        ips = [a for a in local_addresses(names=False) if a != "127.0.0.1"]
+        b = self.bonjour
+        if b is not None and b.state != "starting" and ips and sorted(b.addresses) != sorted(ips):
+            self._start_bonjour()                     # the network changed (new Wi-Fi, cable…)
+            b = self.bonjour
+        port = "" if r.port == 80 else f":{r.port}"
+        urls = []
+        if b is not None and b.state == "ok":
+            urls.append(f"http://{b.hostname}{port}")
+        urls += [f"http://{a}{port}" for a in (ips or ["127.0.0.1"])[:2]]
+        links = "<br>".join(f'<a href="{u}" style="color:#4A8CFF">{u}</a>' for u in urls)
+        if b is not None and b.state == "starting":
+            links += f"<br><span style='color:#8A8A8A'>announcing {b.wanted}.local…</span>"
+        elif b is not None and b.state == "failed":
+            links += f"<br><span style='color:#8A8A8A'>(no .local name: {b.error})</span>"
         lock = "PIN required" if r.pin else "<span style='color:#FFB000'>no PIN — anyone on this network can use it</span>"
         seen = f" · {r.requests} requests" if r.requests else ""
         self.remote_status.setStyleSheet("")
@@ -2276,6 +2329,7 @@ class ControlWindow(QMainWindow):
             self.tc_enable.setChecked(True)
         self.remote_port.setValue(s.value("remote/port", 8080, type=int))
         self.remote_pin.setText(s.value("remote/pin", "", type=str))
+        self.remote_name.setText(s.value("remote/name", "", type=str))
         if s.value("remote/enabled", False, type=bool):
             self.remote_enable.setChecked(True)
         if OSC_AVAILABLE and s.value("osc/in_enabled", False, type=bool):
@@ -2412,6 +2466,7 @@ class ControlWindow(QMainWindow):
         s.setValue("trucue/enabled", self.tc_enable.isChecked())
         s.setValue("remote/port", self.remote_port.value())
         s.setValue("remote/pin", self.remote_pin.text().strip())
+        s.setValue("remote/name", self.remote_name.text().strip())
         s.setValue("remote/enabled", self.remote_enable.isChecked())
         s.setValue("osc/in_enabled", self.osc_in_enable.isChecked())
         self.decklink_panel.save(s)
@@ -2429,6 +2484,7 @@ class ControlWindow(QMainWindow):
         if self.tc_rx:
             self.tc_rx.close()
             self.tc_rx = None
+        self._stop_bonjour()
         if self.remote:
             self.remote.close()
             self.remote = None

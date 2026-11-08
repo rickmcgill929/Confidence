@@ -544,8 +544,8 @@ class RemoteServer:
         return [f"http://{a}:{self.port}" for a in local_addresses()]
 
 
-def local_addresses() -> List[str]:
-    """This computer's LAN addresses (best first) and its .local name, for showing in the app."""
+def local_addresses(names: bool = True) -> List[str]:
+    """This computer's LAN addresses (best first) and, with `names`, its .local name."""
     found: List[str] = []
     try:                                           # the address used to reach the network (no packet sent)
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -561,10 +561,10 @@ def local_addresses() -> List[str]:
                 found.append(a)
     except OSError:
         pass
-    host = socket.gethostname()
+    host = socket.gethostname() if names else ""
     if host and not host.endswith(".local") and "." not in host:
         host += ".local"
-    if host:
+    if host and host.endswith(".local"):           # not "Mac.localdomain" — that only works on the Mac itself
         found.append(host)
     return found or ["127.0.0.1"]
 

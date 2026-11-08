@@ -277,3 +277,40 @@ def test_stopped_column_before_launch_keeps_new_media():
     t.handle("/millumin/board/stoppedColumn", 1, "A", now=10.01)
     t.handle("/millumin/board/launchedColumn", 2, "B", now=10.02)
     assert t.view(now=11).clip == "b.mov"
+
+
+def test_limitimer_millumin_preset(qapp):
+    """Both halves: Limitimer on top always; the Millumin half empties when the column has nothing."""
+    from PyQt6.QtCore import QRectF
+    from PyQt6.QtGui import QImage, QPainter
+    from dsan.clock.layout import PRESETS, expand_tokens
+    from dsan.clock.render import Frame, Renderer
+    from dsan.devices import LinkState
+    from dsan.limitimer import LimitimerState, Program
+    lay = PRESETS["Limitimer + Millumin"]()
+    assert lay.background == "#000000"
+    assert lay.elements[0].type == "cue"                           # frame drawn underneath everything
+    t = MilluminTracker()
+    t.handle("/millumin/layer:Main/selected", now=0)
+    t.handle("/millumin/layer:Main/mediaStarted", 1, "keynote.mov", 125.0, now=0)
+    t.handle("/millumin/selectedLayer/launchedColumn", 3, now=0)
+    v = t.view(now=10.0)
+    texts = {e.name: expand_tokens(e.text, None, None, v) for e in lay.elements if e.type == "label"}
+    assert texts["Millumin Clip Name"] == "keynote.mov" and texts["Millumin TRT"] == "2:05"
+    assert texts["Millumin State"] == "PLAYING" and texts["Millumin Column"] == expand_tokens("{column}", None, None, v)
+    st = LimitimerState(programs=(Program(1, 1, 300, 30, 100),), selected_index=0)
+
+    def render(view):
+        img = QImage(640, 360, QImage.Format.Format_ARGB32)
+        img.fill(0xFF000000)
+        p = QPainter(img)
+        Renderer().paint(p, QRectF(0, 0, 640, 360), lay, Frame(state=st, link=LinkState.LIVE, millumin=view, now=10.0))
+        p.end()
+        return img
+
+    def lit(img, y0, y1):
+        return sum(1 for y in range(int(360 * y0), int(360 * y1), 3) for x in range(30, 610, 3)
+                   if img.pixelColor(x, y).lightness() > 60)
+    full, empty = render(v), render(None)
+    assert lit(full, 0.13, 0.41) > 100 and lit(empty, 0.13, 0.41) > 100      # Limitimer digits both times
+    assert lit(full, 0.59, 0.87) > 100 and lit(empty, 0.59, 0.87) == 0       # Millumin countdown only with a clip
