@@ -62,6 +62,20 @@ PAGE = r"""<!doctype html>
   #pin { position: fixed; inset: 0; background: rgba(5,7,10,.85); display: none; align-items: center; justify-content: center; z-index: 30; }
   #pin form { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); padding: 22px; width: min(92vw, 340px); }
   #pin input { width: 100%; font-size: 22px; letter-spacing: 6px; text-align: center; margin: 12px 0; }
+  .ltgrid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin: 10px 0 6px; }
+  .ltgrid button { padding: 9px 4px; min-height: 46px; }
+  .ltgrid .span2 { grid-column: span 2; }
+  .ltgrid button { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  @media (max-width: 480px) { .ltgrid button { font-size: 13px; padding: 9px 2px; } }
+  .ltgrid button.lit-on { background: #2E6BFF; border-color: #5A8BFF; color: #fff; }
+  .ltgrid button.lit-dim { background: #1B2D52; color: #C8D6FF; }
+  .ltgrid button.lit-run { background: #0E7A47; border-color: var(--green); color: #fff; }
+  .ltgrid button.lit-amber { background: #7A5A00; border-color: var(--yellow); color: #fff; }
+  .lamps { display: flex; align-items: center; gap: 8px; }
+  .lamp { width: 16px; height: 16px; border-radius: 50%; background: #2A303A; display: inline-block; }
+  .readout { font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; margin-left: 8px; }
+  .times { display: grid; grid-template-columns: auto 1fr 1fr auto; gap: 6px 8px; align-items: center; margin-top: 8px; }
+  .times input { width: 100%; min-width: 0; }
 </style>
 </head>
 <body>
@@ -129,6 +143,19 @@ PAGE = r"""<!doctype html>
     <div class="row"><label class="switch"><input type="checkbox" id="demo"> Demo (simulated devices)</label></div>
   </section>
 
+  <section id="lt">
+    <h2>Limitimer</h2>
+    <div class="row"><label for="lt_mode">Timer</label><select class="grow" id="lt_mode"></select></div>
+    <div class="status note" id="lt_status"></div>
+    <div class="ltgrid" id="lt_keys"></div>
+    <div class="lamps"><span class="lamp" id="lamp_green" title="Green"></span><span class="lamp" id="lamp_yellow" title="Yellow"></span>
+      <span class="lamp" id="lamp_red" title="Red"></span><span class="readout" id="lt_readout"></span></div>
+    <details id="lt_times">
+      <summary>Program times</summary>
+      <div class="times" id="lt_times_grid"></div>
+    </details>
+  </section>
+
   <section class="wide">
     <h2>Feeds</h2>
     <details>
@@ -153,7 +180,7 @@ PAGE = r"""<!doctype html>
       <div class="row"><label class="switch"><input type="checkbox" id="osc_send"> Send OSC</label>
         <input class="grow" id="osc_target" placeholder="127.0.0.1:5000">
         <input id="osc_prefix" placeholder="/dsan" style="width:110px"></div>
-      <div class="row"><label class="switch"><input type="checkbox" id="osc_receive"> Receive (Perfect Cue control)</label>
+      <div class="row"><label class="switch"><input type="checkbox" id="osc_receive"> Receive (Perfect Cue and Limitimer control)</label>
         <input type="number" id="osc_port" min="1024" max="65535"><button data-apply="osc">Apply</button></div>
     </details>
   </section>
@@ -250,7 +277,7 @@ function render(s) {
     }
     const sel = card.querySelector("select"); sel.disabled = s.demo;
     fillSelect(sel, d.ports, d.port);
-    const b = card.querySelector("button"); b.textContent = d.connected ? "Disconnect" : "Connect"; b.className = d.connected ? "on" : ""; b.disabled = s.demo;
+    const b = card.querySelector("button"); b.textContent = d.button || (d.connected ? "Disconnect" : "Connect"); b.className = d.connected ? "on" : ""; b.disabled = s.demo;
     setStatus(card.querySelector(".status"), d.status);
   }
   setVal($("demo"), s.demo);
@@ -287,6 +314,70 @@ function render(s) {
   }
   setStatus($("dl_status"), k.status);
   $("dl_warning").textContent = k.warning;
+  renderLimitimer(s.limitimer);
+}
+
+// Limitimer console: same layout as the app (and the real console)
+const LT_LAYOUT = [["program_1"], ["program_2"], ["program_3"], ["session"],
+  ["start_stop", "span2"], ["repeat"], ["clear"],
+  ["total_down"], ["total_up"], ["sumup_down"], ["sumup_up"],
+  ["seconds"], ["beep"], ["blink"]];
+const PROGRAM_KEYS = ["program_1", "program_2", "program_3", "session"];
+function mmss(secs) {
+  const h = Math.floor(secs / 3600), m = Math.floor(secs % 3600 / 60), s = secs % 60;
+  return h ? `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}` : `${m}:${String(s).padStart(2, "0")}`;
+}
+function renderLimitimer(L) {
+  fillSelect($("lt_mode"), L.modes, L.mode);
+  $("lt_status").textContent = L.status;
+  const grid = $("lt_keys");
+  if (!grid.childElementCount) {
+    const labels = Object.fromEntries(L.keys.map((k) => [k.value, k.label]));
+    for (const [key, cls] of LT_LAYOUT) {
+      const b = document.createElement("button"); b.type = "button"; b.dataset.key = key;
+      b.textContent = labels[key] || key; if (cls) b.classList.add(cls);
+      b.addEventListener("click", () => act({ action: "limitimer", key }));
+      grid.appendChild(b);
+    }
+  }
+  const lamps = L.lamps;
+  for (const b of grid.children) {
+    const key = b.dataset.key, i = PROGRAM_KEYS.indexOf(key);
+    let lit = "";
+    if (i >= 0) lit = lamps.programs[i] === "on" ? "lit-on" : lamps.programs[i] === "dim" ? "lit-dim" : "";
+    else if (key === "start_stop" && lamps.running) lit = "lit-run";
+    else if ((key === "beep" && lamps.beep) || (key === "blink" && lamps.blink) || (key === "seconds" && lamps.seconds)) lit = "lit-amber";
+    b.classList.remove("lit-on", "lit-dim", "lit-run", "lit-amber");
+    if (lit) b.classList.add(lit);
+    b.disabled = !L.target;
+  }
+  $("lamp_green").style.background = lamps.green ? "var(--green)" : "";
+  $("lamp_yellow").style.background = lamps.yellow ? "var(--yellow)" : "";
+  $("lamp_red").style.background = lamps.red ? "var(--red)" : "";
+  $("lt_readout").textContent = lamps.remaining || "";
+  const times = $("lt_times");
+  times.style.display = L.mode === "emulate" ? "" : "none";
+  if (L.mode === "emulate" && L.programs) {
+    const g = $("lt_times_grid");
+    if (!g.childElementCount) {
+      g.innerHTML = '<span></span><span class="note">Total</span><span class="note">Sum-up</span><span></span>';
+      ["1", "2", "3", "Session"].forEach((name, i) => {
+        const lbl = document.createElement("span"); lbl.textContent = name;
+        const t = document.createElement("input"); t.id = "lt_total_" + i; t.placeholder = "m:ss"; t.inputMode = "numeric";
+        const u = document.createElement("input"); u.id = "lt_sumup_" + i; u.placeholder = "m:ss"; u.inputMode = "numeric";
+        for (const f of [t, u]) f.addEventListener("input", () => { f.dataset.dirty = "1"; });   // keep typed text
+        const b = document.createElement("button"); b.type = "button"; b.textContent = "Set";
+        b.addEventListener("click", () => { delete t.dataset.dirty; delete u.dataset.dirty;
+          act({ action: "limitimer", program: i + 1, total: t.value, sumup: u.value }); });
+        g.append(lbl, t, u, b);
+      });
+    }
+    L.programs.forEach((p, i) => {
+      const t = $("lt_total_" + i), u = $("lt_sumup_" + i);
+      if (!t.dataset.dirty) setVal(t, mmss(p.total));
+      if (!u.dataset.dirty) setVal(u, mmss(p.sumup));
+    });
+  }
 }
 
 // controls
@@ -298,6 +389,7 @@ $("mode").addEventListener("change", (e) => act({ action: "output", mode: e.targ
 $("screen").addEventListener("change", (e) => act({ action: "output", screen: e.target.value }));
 $("showout").addEventListener("click", () => act({ action: "output", shown: !state.output.shown }));
 $("demo").addEventListener("change", (e) => act({ action: "demo", on: e.target.checked }));
+$("lt_mode").addEventListener("change", (e) => act({ action: "limitimer", mode: e.target.value }));
 $("mm_enabled").addEventListener("change", (e) => act({ action: "millumin", enabled: e.target.checked }));
 $("tc_enabled").addEventListener("change", (e) => act({ action: "trucue", enabled: e.target.checked }));
 $("osc_send").addEventListener("change", (e) => act({ action: "osc", send: e.target.checked }));

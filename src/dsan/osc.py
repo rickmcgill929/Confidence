@@ -29,6 +29,17 @@ OSC in — :class:`OscListener`, commands for the Perfect Cue::
     /perfectcue/command NAME    send a receiver command: forward | reverse | blank_on | blank_off
     /perfectcue/command/NAME    same, e.g. /perfectcue/command/forward
 
+OSC in — Limitimer buttons (when the listener is given ``on_limitimer``; in Confidence
+they go to the software Limitimer or, through a DSAN TP-2000X, to a real one)::
+
+    /limitimer/start            Start/Stop (also /limitimer/stop, /limitimer/start_stop)
+    /limitimer/p1 … /p3         select a program; /limitimer/session (or /p4) the Session
+    /limitimer/program N        same, N = 1-4
+    /limitimer/time+  /time-    total time up / down (a minute, or a second in Seconds mode)
+    /limitimer/sumup+ /sumup-   sum-up time up / down
+    /limitimer/seconds /repeat /clear /beep /blink
+    /limitimer/press NAME       any of the above by name
+
 Names are case-insensitive. A single argument of 0 on a trigger address (not
 /blank) is ignored, so a button that sends 1 on press and 0 on release fires once.
 """
@@ -213,7 +224,7 @@ class OscListener:
     """
 
     def __init__(self, port: int, host: str = "0.0.0.0", *, perfectcue: Optional[PerfectCue] = None,
-                 prefix: str = "/dsan", on_press=None, on_message=None):
+                 prefix: str = "/dsan", on_press=None, on_message=None, on_limitimer=None):
         try:
             from pythonosc.dispatcher import Dispatcher
             from pythonosc.osc_server import ThreadingOSCUDPServer
@@ -223,6 +234,8 @@ class OscListener:
         self.prefix = prefix.rstrip("/")
         self.on_press = on_press
         self.on_message = on_message
+        #: on_limitimer(name) presses a Limitimer button; raise ValueError if it can't.
+        self.on_limitimer = on_limitimer
         self.received = 0
         self.last: Optional[Tuple[str, tuple, str]] = None
         d = Dispatcher()
@@ -261,9 +274,12 @@ class OscListener:
 
     def handle(self, address: str, *args) -> str:
         """Carry out one command; returns what was done or raises OscError. Thread-agnostic."""
+        ltbase = f"{self.prefix}/limitimer/"
+        if address.lower().startswith(ltbase.lower()):
+            return self._limitimer(address[len(ltbase):].strip("/"), args)
         base = f"{self.prefix}/perfectcue/"
         if not address.lower().startswith(base.lower()):
-            raise OscError(f"ignored {address} (not under {base})")
+            raise OscError(f"ignored {address} (not under {base} or {ltbase})")
         parts = address[len(base):].strip("/").lower().split("/")
         verb, rest = parts[0], parts[1:]
         name = rest[0] if rest else (str(args[0]) if args and isinstance(args[0], str) else None)
@@ -304,6 +320,40 @@ class OscListener:
                 raise OscError("Perfect Cue port isn't open")
             return f"command {cmd.name}"
         raise OscError(f"unknown address {address}")
+
+    def _limitimer(self, path: str, args: tuple) -> str:
+        if self.on_limitimer is None:
+            raise OscError("Limitimer control isn't available here")
+        parts = path.split("/")
+        verb, rest = parts[0].lower(), parts[1:]
+        if verb in ("press", "program"):
+            name = rest[0] if rest else (args[0] if args and not isinstance(args[0], bool) else None)
+            if name is None:
+                raise OscError(f"/limitimer/{verb} needs " + ("a button name" if verb == "press" else "1-4"))
+            if verb == "program":
+                try:
+                    n = int(float(name))
+                except (TypeError, ValueError):
+                    raise OscError("/limitimer/program needs 1-4") from None
+                if not 1 <= n <= 4:
+                    raise OscError("/limitimer/program needs 1-4")
+                name = f"p{n}"
+            elif rest and _is_release(args):
+                return "release ignored"
+        else:
+            if _is_release(args):
+                return "release ignored"
+            name = "/".join(parts)
+        from .control import Key
+        try:
+            key = Key.parse(str(name))
+        except ValueError as e:
+            raise OscError(str(e)) from None
+        try:
+            self.on_limitimer(key)
+        except ValueError as e:
+            raise OscError(str(e)) from None
+        return f"Limitimer {key.label}"
 
     def _press(self, button: pc.Button) -> str:
         if self.on_press is not None:

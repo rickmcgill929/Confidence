@@ -191,6 +191,18 @@ State updates go out as one OSC bundle per change, so receivers never see half a
 
 Names aren't case-sensitive. A single `0` argument on a trigger address is ignored, so a controller button that sends 1 on press and 0 on release fires once. In Bitfocus Companion, use the *Generic OSC* module and send e.g. `/dsan/perfectcue/next` to Confidence's listen port.
 
+**Limitimer buttons** (Confidence, or `OscListener(on_limitimer=…)`): they press the software Limitimer, or a real one through a TP-2000X — see [Limitimer control](#limitimer-control-and-the-software-limitimer).
+
+| Address | Argument | Does |
+|---|---|---|
+| `/limitimer/start` (also `/stop`) | — | Start/Stop |
+| `/limitimer/p1` · `/p2` · `/p3` · `/session` | — | select a program (Session = program 4) |
+| `/limitimer/program` | `1`–`4` | same, by number |
+| `/limitimer/time+` · `/time-` | — | total time up / down a minute (a second in Seconds mode) |
+| `/limitimer/sumup+` · `/sumup-` | — | sum-up time up / down |
+| `/limitimer/seconds` · `/repeat` · `/clear` · `/beep` · `/blink` | — | the other buttons |
+| `/limitimer/press` | a name above | any button by name |
+
 ---
 
 ### Millumin feedback
@@ -302,6 +314,16 @@ If the debug console shows bytes that aren't button codes (Perfect Cue) or **Dev
 - Optional OSC out (the same address map as above) and OSC in for Perfect Cue control: cues on screen, LEDs and receiver commands. Received messages show in the OSC box and the debug console.
 - Everything is remembered between launches. There's also *Connect on launch*.
 
+### Limitimer control and the software Limitimer
+
+The **LIMITIMER CONTROL** box has the Limitimer's buttons — 1 · 2 · 3 · Session, Start/Stop, Repeat, Clear, Time ±, Sum-up ±, Seconds, Beep, Blink — lit like the console (selected program bright, a program running in the background dim), with its green/yellow/red lamps and the time. The same buttons are on the browser remote and on OSC (`/dsan/limitimer/…`, above), so Bitfocus Companion or a Stream Deck can run the timer. **Timer** picks what they drive:
+
+- **Real Limitimer** — Confidence reads the console's RS-485 data as before. The RS-485 data port only *reports* the timer, so pressing its buttons from a computer needs DSAN's **TP-2000X** touch-panel adapter: wire a USB-RS232 adapter to it (RS-232, 9600 8N1 — or a serial-to-IP converter, `socket://host:port`), pick it next to **TP-2000X** and press **Connect**. Its lamps and times come back through it, too. Without one, the buttons stay greyed out.
+- **Software Limitimer** — Confidence *is* the Limitimer: no console needed. **Programs & switches…** sets each program's total and sum-up time and the switches a console has on its back (count down/up, keep counting past zero, changes while running, minutes:seconds or hours:minutes, the lights' sound). Everything that shows a Limitimer — screen, SDI, OSC out, the browser — runs from it.
+  - **Drive DSAN lights:** pick the RS-485 adapter wired to the signal lights or displays as the Limitimer's adapter in INPUTS and press **Send to lights**. Confidence sends what a console sends (status 10×/s, a ping each second, 19200 8N1). **Only with no Limitimer console on that bus** — two senders scramble each other; Confidence warns if it hears another one. Lights normally get 12 V from the console over the Cat-5 cable: without a console, power them separately (e.g. DSAN's PSL-PB6 hub). The signal-light side is built from the wire protocol and the Limitimer's own data; check it with your lights before a show.
+
+How the software Limitimer's buttons behave follows DSAN's user guide: programs 1–3 can't run together (switching stops the running one) while the Session can run in the background; Time/Sum-up step a minute, or a second in Seconds mode, and only while stopped if changes are locked. **Repeat** puts the selected program back to full time, stopped (the guide doesn't say whether the console restarts it); **Clear** stops it and zeroes its times.
+
 ### DeckLink SDI output (cut/fill)
 
 Confidence can put the clock out on a Blackmagic DeckLink card as SDI, either fill only or **fill + key** for a switcher's downstream keyer.
@@ -351,7 +373,7 @@ Tick **Allow control from a web browser** in the REMOTE box (default port 8080) 
 
 The `.local` name is announced with Bonjour/mDNS (built into iPhone, iPad, Mac and Windows 10+; most Android phones from Android 12, otherwise use the IP address). Running more than one Confidence? Give each its own **Name** in the REMOTE box (`stage-left` → `http://stage-left.local:8080`); a name already in use gets `-2` added. Set the port to **80** for just `http://confidence.local` (on Linux, ports under 1024 need extra permission).
 
-The page shows a **live preview** of the output (about once a second) and lets you send and clear **presenter messages** (with the quick WRAP UP / 1 MINUTE / PLEASE STOP buttons), load a **preset or a saved layout** (from the layouts folder), set the **output** mode and display and show/hide it, pick each device's **adapter** and connect/disconnect it, switch **Demo** on/off, set up the **Millumin, TruCue and OSC** feeds, and run the **DeckLink SDI output** — device, video mode, cut/fill, SDI layout, premultiplied fill, start/stop (device, mode and cut/fill are locked while on air, as in the app). Editing a layout's elements stays in the app.
+The page shows a **live preview** of the output (about once a second) and lets you send and clear **presenter messages** (with the quick WRAP UP / 1 MINUTE / PLEASE STOP buttons), load a **preset or a saved layout** (from the layouts folder), set the **output** mode and display and show/hide it, pick each device's **adapter** and connect/disconnect it, switch **Demo** on/off, set up the **Millumin, TruCue and OSC** feeds, run the **Limitimer** (its buttons, Real or Software, and the software Limitimer's program times), and run the **DeckLink SDI output** — device, video mode, cut/fill, SDI layout, premultiplied fill, start/stop (device, mode and cut/fill are locked while on air, as in the app). Editing a layout's elements stays in the app.
 
 Set a **PIN** on any network you don't control: the page asks for it once and remembers it in that browser. Without one, anyone on the network who finds the page can use it. The page works over plain HTTP on your local network — don't expose the port to the internet.
 
@@ -392,6 +414,8 @@ The tag starts the GitHub workflow: it builds macOS (Apple silicon and Intel; si
 ## Protocol notes
 
 **Limitimer**: RS-485, 19200 8N1. Frames are `0x81 | 7-bit payload | 0x83 | CRC16-MODBUS (2 bytes, big-endian, not 7-bit) | 0xFF`. Status messages are 55 bytes on the wire; type `0x10` is a ping. Because the CRC is raw, it can contain `0x81`, `0x83` or `0xFF`, so the decoder counts exactly two CRC bytes rather than scanning for the end byte. Like the Go reference, a `0x0000` checksum is accepted as "CRC disabled" (`accept_zero_crc=False` to reject). The full layout is in the `dsan.limitimer` docstring.
+
+**Limitimer control (TP-2000X)**: DSAN's "Limitimer ASCII API", RS-232 9600 8N1, `>COMMAND CK\r` both ways (`CK` as for the Perfect Cue receiver below). Buttons: `PRG1` `PRG2` `PRG3` `SESS` `STOP` (start/stop) `TTUP` `TTDN` `STUP` `STDN` `SSEC` `REPT` `CLR` `BEEP` `BLNK`. Back from the Limitimer, about 4×/s: `P1LEDON`/`DM`/`OF` (also `P2`, `P3`, `SES`), `BPLED…`, `BKLED…`, `GRNLED…`, `YELLED…`, `REDLED…` (`ON`/`OF`), `SMON`/`SMOF`, `BEEP`, `TTSTR=MM:SS`, `STSTR=MM:SS`, `RTSTR=MM:SS`. In `dsan.control`.
 
 **Perfect Cue**: 19200 8N1. Button presses arrive as single bytes (`0x0F` next, `0x1F` prev, `0x2F`/`0x3F` blank with LED off/on). In master mode, bytes sent back light its LEDs: Enter (`\r`) the green arrow, an arrow key the red arrow, `R`/`T`/`Y`/`U` blink yellow and leave it on, `E`/`A`/`D` blink and leave it off, anything else blinks yellow for a while — `cue.light(pc.Led.NEXT)`. The receiver's separate ASCII API is RS-232 9600 8N1: `>COMMAND CK\r`, where `CK` is the low byte of the sum of `COMMAND` plus the space (not the `>`), in uppercase hex.
 

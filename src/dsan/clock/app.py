@@ -43,6 +43,8 @@ from . import files
 from .widgets import Combo, ElidingLabel, FlowLayout
 from .debug import DebugTap, DebugWindow
 from .decklink_panel import DeckLinkPanel
+from .ltcontrol import LimitimerPanel
+from ..emulator import LimitimerBus
 from .editor import EditorCanvas, History, make_icon
 from .output import MODES, OutputWindow
 from .render import CueState, Frame, Renderer
@@ -428,6 +430,7 @@ class ControlWindow(QMainWindow):
         self.osc_in = None
         self.mm_rx = None
         self.tc_rx = None
+        self.lt_bus: Optional[LimitimerBus] = None   # software Limitimer → DSAN lights
         self.remote = None
         self.bonjour = None              # announces <name>.local for the remote page
         self._detecting = False
@@ -638,6 +641,9 @@ class ControlWindow(QMainWindow):
         lv = QVBoxLayout(left)
         lv.setContentsMargins(8, 4, 8, 8)
         lv.addWidget(self._build_inputs())
+        self.lt_panel = LimitimerPanel(lambda m: self.statusBar().showMessage(m, 6000), self._visible_ports)
+        self.lt_panel.mode_changed.connect(self._lt_mode_changed)
+        lv.addWidget(self.lt_panel)
         lv.addWidget(self._build_dips())
         lv.addWidget(self._build_output())
         self.decklink_panel = DeckLinkPanel(self.renderer, lambda: self.layout_obj, self.frame,
@@ -892,7 +898,7 @@ class ControlWindow(QMainWindow):
         st = self.lt_state
         live = self.lt_link == LinkState.LIVE
         values = tuple(fn(st) for _n, _name, fn in self._DIPS) if st else None
-        key = (values, live, self.demo)
+        key = (values, live, self.demo, self.emulating)
         if key == self._dip_key:
             return
         self._dip_key = key
@@ -908,6 +914,9 @@ class ControlWindow(QMainWindow):
             self.dip_note.setText("Connect the Limitimer to read its switches.")
         elif self.demo:
             self.dip_note.setText("Demo values. Switches 1 (mode) and 10 (RF) aren't reported by the Limitimer.")
+        elif self.emulating:
+            self.dip_note.setText("The software Limitimer's switches — change them in LIMITIMER CONTROL → "
+                                  "Programs & switches.")
         elif not live:
             self.dip_note.setText("Last values seen — Limitimer data has stopped.")
         else:
@@ -976,14 +985,16 @@ class ControlWindow(QMainWindow):
         form.addRow("Prefix", self.osc_prefix)
         form.addRow(self.osc_status)
 
-        self.osc_in_enable = QCheckBox("Receive OSC (Perfect Cue control)")
+        self.osc_in_enable = QCheckBox("Receive OSC (Perfect Cue and Limitimer control)")
         self.osc_in_enable.setEnabled(OSC_AVAILABLE)
         self.osc_in_enable.setToolTip(
             "Listen for commands, prefix + …\n"
             "  /perfectcue/next · /prev · /blank 1|0      show a cue (as if pressed)\n"
             "  /perfectcue/press next|prev|blank_on|blank_off\n"
             "  /perfectcue/led next|prev|blank_on|blank_off|error    light the Perfect Cue LEDs\n"
-            "  /perfectcue/command forward|reverse|blank_on|blank_off   receiver command")
+            "  /perfectcue/command forward|reverse|blank_on|blank_off   receiver command\n"
+            "  /limitimer/start · /p1 … /p3 · /session · /time+ · /time- · /sumup+ · /sumup-\n"
+            "  /limitimer/repeat · /clear · /beep · /blink · /seconds · /program 1-4   Limitimer buttons")
         self.osc_in_enable.toggled.connect(self._rebuild_osc_in)
         self.osc_in_port = QSpinBox()
         self.osc_in_port.setRange(1024, 65535)
@@ -1347,6 +1358,7 @@ class ControlWindow(QMainWindow):
         self._port_infos = {p.device: p for p in infos}
         if changed or force:
             self._rebuild_port_combos()
+            self.lt_panel.ports_changed()
         if changed and not self.demo and not self._detecting:
             for kind in ("lt", "pc"):
                 ref = self.refs.get(kind)
@@ -1388,8 +1400,15 @@ class ControlWindow(QMainWindow):
         return ref.resolve(self._port_infos.values()) if ref else None
 
     def _running_port(self, kind: str) -> Optional[str]:
+        if kind == "lt" and self.emulating:
+            return self.lt_bus.port if self.lt_bus else None
         dev = self.limitimer if kind == "lt" else self.perfectcue
         return dev.port if dev else None
+
+    @property
+    def emulating(self) -> bool:
+        """Confidence is the Limitimer (software); the Limitimer adapter sends to DSAN lights."""
+        return hasattr(self, "lt_panel") and self.lt_panel.mode == "emulate" and not self.demo
 
     def _port_picked(self, kind: str, index: int):
         """The operator chose an entry in one of the dropdowns."""
@@ -1447,7 +1466,9 @@ class ControlWindow(QMainWindow):
     def _connect_clicked(self, kind: str, on: bool):
         if on and not self.refs.get(kind):
             self._connect_btn(kind).setChecked(False)
-            self.statusBar().showMessage("Pick an adapter for it first", 5000)
+            self.statusBar().showMessage(
+                "Pick the RS-485 adapter wired to the DSAN lights first" if kind == "lt" and self.emulating
+                else "Pick an adapter for it first", 5000)
             return
         if self.demo:
             self._toggle_demo(False)
@@ -1463,7 +1484,13 @@ class ControlWindow(QMainWindow):
             btn = self._connect_btn(kind)
             on = self.want[kind] and not self.demo
             btn.setChecked(on)
-            btn.setText("Disconnect" if on else "Connect")
+            if kind == "lt" and self.emulating:
+                btn.setText("Stop sending" if on else "Send to lights")
+                btn.setToolTip("Send the software Limitimer out of this adapter, like a Limitimer console, "
+                               "to drive DSAN signal lights and displays.\nOnly with no Limitimer on that bus.")
+            else:
+                btn.setText("Disconnect" if on else "Connect")
+                btn.setToolTip("")
             btn.setEnabled(not self.demo)
 
     def _make_device(self, kind: str, port: str):
@@ -1481,7 +1508,13 @@ class ControlWindow(QMainWindow):
             return
         self._stop_device(kind)
         port = self._resolved(kind) if self.want[kind] else None
-        if port:
+        if kind == "lt" and self.emulating:
+            dev = Limitimer(transport_factory=self.lt_panel.emulator.transport, reconnect=False)
+            dev.port = "emulator"
+            self._start_limitimer(dev)
+            if port:
+                self._start_bus(port)
+        elif port:
             dev = self._make_device(kind, port)
             if kind == "lt":
                 self._start_limitimer(dev)
@@ -1537,12 +1570,21 @@ class ControlWindow(QMainWindow):
         dev.on_error(lambda e: self.sig.error.emit(f"Perfect Cue: {e}"))
         dev.start()
 
+    def _start_bus(self, port: str):
+        bus = LimitimerBus(self.lt_panel.emulator, port)
+        self.lt_bus = bus
+        bus.on_error(lambda e: self.sig.error.emit(f"Limitimer lights: {e}"))
+        bus.start()
+
     def _stop_device(self, kind: str):
         attr = "limitimer" if kind == "lt" else "perfectcue"
         dev = getattr(self, attr)
         setattr(self, attr, None)
         if dev:
             dev.stop()
+        if kind == "lt" and self.lt_bus is not None:
+            bus, self.lt_bus = self.lt_bus, None
+            bus.stop()
         if kind == "lt":
             self.lt_state = None
             self.lt_link = LinkState.CLOSED
@@ -1560,15 +1602,29 @@ class ControlWindow(QMainWindow):
 
     # ── device events (GUI thread) ───────────────────────────────────────────────
 
+    def _lt_mode_changed(self, mode: str):
+        if self.demo:
+            self._toggle_demo(False)          # leaving demo applies the new mode
+        else:
+            self._apply_device("lt")
+        self._dip_key = None
+        self._update_dips()
+        self.lt_panel.save(self.settings)
+        msg = ("Software Limitimer — Confidence runs the timer" if mode == "emulate"
+               else "Reading the real Limitimer")
+        self.statusBar().showMessage(msg, 5000)
+
     def _on_lt_state(self, state):
         if self.limitimer is not None:
             self.lt_state = state
             self._update_dips()
+            self.lt_panel.show_state(state, self.lt_link == LinkState.LIVE)
 
     def _on_lt_link(self, link):
         if self.limitimer is None and link != LinkState.CLOSED:
             return
         self.lt_link = link if self.limitimer else LinkState.CLOSED
+        self.lt_panel.show_state(self.lt_state, self.lt_link == LinkState.LIVE)
         self._update_activity()
 
     def _on_pc_link(self, link):
@@ -1600,6 +1656,24 @@ class ControlWindow(QMainWindow):
         lt, link = self.limitimer, self.lt_link
         if self.demo:
             self._status(self.lt_status, "● demo — simulated Limitimer", "#00E07A")
+        elif self.emulating:
+            bus = self.lt_bus
+            if not self.refs.get("lt") or not self.want["lt"]:
+                self._status(self.lt_status, "● Software Limitimer (LIMITIMER CONTROL below). To drive DSAN "
+                                             "lights, pick their adapter and press Send to lights.", "#00E07A")
+            elif bus is None:
+                self._status(self.lt_status, "● lights adapter not plugged in — will send when it is", "#FF3B3B")
+            elif bus.other_console:
+                self._status(self.lt_status, "● Another Limitimer is talking on this bus — turn it off or "
+                                             "unplug it: two consoles on one bus scramble the lights", "#FF3B3B")
+            elif bus.link == LinkState.RECONNECTING:
+                err = f" ({bus.last_error})" if bus.last_error else ""
+                self._status(self.lt_status, f"● can't open the lights adapter, retrying{err}", "#FF3B3B")
+            elif bus.sent:
+                self._status(self.lt_status, f"● Sending to DSAN lights on {os.path.basename(bus.port)}",
+                             "#00E07A")
+            else:
+                self._status(self.lt_status, "● Opening the lights adapter…", "#FFB000")
         elif not self.refs.get("lt"):
             self._status(self.lt_status, "Not used — pick its adapter above", "#6A6A6A")
         elif not self.want["lt"]:
@@ -1820,8 +1894,10 @@ class ControlWindow(QMainWindow):
             self.osc_in = OscListener(port, perfectcue=self.perfectcue,
                                       prefix=self.osc_prefix.text() or "/dsan",
                                       on_press=self.sig.osc_press.emit,
-                                      on_message=self.sig.osc_message.emit)
-            self.osc_in_status.setText(f"Listening on UDP {port} · {self.osc_in.prefix}/perfectcue/…")
+                                      on_message=self.sig.osc_message.emit,
+                                      on_limitimer=self.lt_panel.press)
+            self.osc_in_status.setText(f"Listening on UDP {port} · {self.osc_in.prefix}/perfectcue/… "
+                                       f"and {self.osc_in.prefix}/limitimer/…")
         except OSError as e:
             self.osc_in_enable.setChecked(False)
             self.osc_in_status.setText(f"Can't listen on {port}: {e.strerror or e}")
@@ -2293,7 +2369,10 @@ class ControlWindow(QMainWindow):
             # devices that were connected when the app quit reconnect at launch
             self.want[kind] = bool(self.refs[kind]) and s.value(f"inputs/{kind}_connected", False, type=bool)
         self.show_all_ports.setChecked(s.value("inputs/show_all", False, type=bool))
+        self.lt_panel.load(s)
         self._refresh_ports(force=True)    # reconnects devices that were connected last time
+        if self.emulating and self.limitimer is None:
+            self._apply_device("lt")       # the software Limitimer runs without an adapter
         self._sync_connect_buttons()
 
         text = s.value("layout/json", "")
@@ -2446,6 +2525,7 @@ class ControlWindow(QMainWindow):
         s = self.settings
         s.setValue("window/geometry", self.saveGeometry())
         self._save_ports()
+        self.lt_panel.save(s)
         s.setValue("inputs/show_all", self.show_all_ports.isChecked())
         s.setValue("output/mode", self.mode_combo.currentData())
         s.setValue("output/screen", self._wanted_screen or self.screen_combo.currentData() or "")
@@ -2475,6 +2555,7 @@ class ControlWindow(QMainWindow):
     def closeEvent(self, e):
         self._save_settings()
         self.decklink_panel.shutdown()
+        self.lt_panel.close_all()
         if self.debug_window is not None:
             self.debug_window.shutdown()
         self._stop_devices()

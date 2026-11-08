@@ -158,3 +158,41 @@ def test_app_osc_in(qapp, monkeypatch):
     assert w2.osc_in_port.value() == port
     w2.close()
     QSettings("TRUCUE", "DSANClockOscIn").clear()
+
+
+def test_limitimer_buttons():
+    from dsan.control import Key
+    from dsan.emulator import LimitimerEmulator
+    emu = LimitimerEmulator()
+    pressed = []
+
+    def press(key):
+        pressed.append(key)
+        emu.press(key)
+    with OscListener(0, "127.0.0.1", on_limitimer=press) as lst:
+        assert lst.handle("/dsan/limitimer/p2") == "Limitimer 2"
+        assert lst.handle("/dsan/limitimer/start", 1) == "Limitimer Start / Stop"
+        assert lst.handle("/dsan/limitimer/start", 0) == "release ignored"
+        assert lst.handle("/dsan/Limitimer/TIME+") == "Limitimer Time +"
+        assert lst.handle("/dsan/limitimer/sumup-") == "Limitimer Sum-up −"
+        assert lst.handle("/dsan/limitimer/program", 4) == "Limitimer Session"
+        assert lst.handle("/dsan/limitimer/program/1") == "Limitimer 1"
+        assert lst.handle("/dsan/limitimer/press", "repeat") == "Limitimer Repeat"
+        assert lst.handle("/dsan/limitimer/press/blink", 0) == "release ignored"
+        assert pressed == [Key.PROGRAM_2, Key.START_STOP, Key.TOTAL_UP, Key.SUMUP_DOWN, Key.SESSION,
+                           Key.PROGRAM_1, Key.REPEAT]
+        st = emu.state()
+        assert not st.programs[1].running and st.programs[1].total == 660 and st.selected_index == 0   # 2→1 stops 2
+        for bad in (("/dsan/limitimer/launch",), ("/dsan/limitimer/program", 7), ("/dsan/limitimer/program",),
+                    ("/dsan/limitimer/press",)):
+            with pytest.raises(Exception):
+                lst.handle(*bad)
+
+    def refuse(key):
+        raise ValueError("No TP-2000X connected")
+    with OscListener(0, "127.0.0.1", on_limitimer=refuse) as lst:
+        with pytest.raises(Exception, match="TP-2000X"):
+            lst.handle("/dsan/limitimer/start")
+    with OscListener(0, "127.0.0.1") as lst:
+        with pytest.raises(Exception, match="isn't available"):
+            lst.handle("/dsan/limitimer/start")

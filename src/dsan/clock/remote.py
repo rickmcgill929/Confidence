@@ -99,6 +99,7 @@ class RemoteAPI:
                                                      if p["value"] not in ("__missing__", w._URL_ITEM)],
                             "port": str(combo.currentData() or ""),
                             "connected": bool(w._connect_btn(kind).isChecked()),
+                            "button": w._connect_btn(kind).text(),
                             "status": _status(w.lt_status if kind == "lt" else w.pc_status)}
         return {
             "app": {"name": "Confidence", "version": __version__},
@@ -124,6 +125,7 @@ class RemoteAPI:
                        "forward": w.tc_forward.text(), "yellow": w.tc_yellow.value(), "red": w.tc_red.value(),
                        "status": _status(w.tc_status)},
             "decklink": self.decklink_state(),
+            "limitimer": w.lt_panel.remote_state(),
         }
 
     # -- DeckLink SDI output ---------------------------------------------------------
@@ -177,7 +179,7 @@ class RemoteAPI:
     # -- actions ---------------------------------------------------------------
 
     ACTIONS = ("connect", "port", "demo", "message", "clear_message", "preset", "open_layout",
-               "output", "osc", "millumin", "trucue", "decklink")
+               "output", "osc", "millumin", "trucue", "decklink", "limitimer")
 
     def act(self, data: Dict[str, Any]) -> Dict[str, Any]:
         name = data.get("action")
@@ -318,6 +320,32 @@ class RemoteAPI:
                 if "forward" in data:
                     w.tc_forward.setText(str(data["forward"]).strip())
             self._restart(w.tc_enable, apply, data)
+
+    def _limitimer(self, data):
+        """{mode: read|emulate} · {key: start|p2|time+|…} · {program: 1-4, total: "5:00", sumup: "1:00"}"""
+        from .ltcontrol import MODES, parse_time
+        panel = self.w.lt_panel
+        if "mode" in data:
+            mode = str(data["mode"])
+            if mode not in MODES:
+                raise RemoteError(f"no such Limitimer mode: {mode}")
+            panel.set_mode(mode)
+        if "program" in data:
+            if panel.mode != "emulate":
+                raise RemoteError("Program times can only be set on the software Limitimer")
+            try:
+                n = int(data["program"])
+                total = parse_time(str(data["total"])) if data.get("total") not in (None, "") else None
+                sumup = parse_time(str(data["sumup"])) if data.get("sumup") not in (None, "") else None
+                panel.emulator.set_program(n, total, sumup)
+            except (TypeError, ValueError) as e:
+                raise RemoteError(f"Bad program time: {e}") from None
+            panel.refresh()
+        if "key" in data:
+            try:
+                panel.press(str(data["key"]))
+            except ValueError as e:
+                raise RemoteError(str(e)) from None
 
     @staticmethod
     def _select_str(combo, value, what):

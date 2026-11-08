@@ -6,6 +6,15 @@ Built apps also carry a build number (date and time of the build), shown in **Ab
 
 ## [Unreleased]
 
+## [0.12.0] — 2026-11-08
+
+### Added
+- **Limitimer control.** A new LIMITIMER CONTROL box with the console's buttons (1 · 2 · 3 · Session, Start/Stop, Repeat, Clear, Time ±, Sum-up ±, Seconds, Beep, Blink), lit like the console, with the green/yellow/red lamps and the time. Also on the browser remote and over OSC (`/dsan/limitimer/start`, `/p2`, `/time+`…), so Companion and Stream Deck can run it.
+  - **Real Limitimer:** the buttons press the console through DSAN's TP-2000X adapter (RS-232, 9600 8N1, DSAN's ASCII API) and its lamps and times come back.
+  - **Software Limitimer:** Confidence runs the timer itself, no console needed — four programs with total and sum-up times and the console's switches (Programs & switches…). Everything that shows a Limitimer runs from it.
+  - **Drive DSAN lights:** the software Limitimer can send console data out of the Limitimer's RS-485 adapter (Send to lights) to run DSAN signal lights and displays, and warns if another console is on the same bus.
+- Python library: `dsan.LimitimerControl` (TP-2000X), `dsan.LimitimerEmulator` and `dsan.emulator.LimitimerBus`.
+
 ## [0.11.0] — 2026-11-08
 
 ### Added
