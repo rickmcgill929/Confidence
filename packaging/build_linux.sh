@@ -18,7 +18,13 @@ VENV=.build-venv-linux
 echo "==> Build environment ($("$PY" --version))"
 [ -d "$VENV" ] || "$PY" -m venv "$VENV"
 "$VENV/bin/python" -m pip install --quiet --upgrade pip
-"$VENV/bin/python" -m pip install --quiet ".[clock]" "pyinstaller>=6.16"
+PINS=()
+if [ "$(uname -m)" = aarch64 ]; then
+  # Raspberry Pi build. Newer PyQt6 only ships ARM builds for glibc 2.39+, which Raspberry Pi OS
+  # Bookworm (2.36) and this build's Ubuntu 22.04 (2.35) don't have; 6.7 is the newest that runs.
+  PINS=("PyQt6==6.7.1" "PyQt6-Qt6==6.7.3")
+fi
+"$VENV/bin/python" -m pip install --quiet --only-binary PyQt6,PyQt6-Qt6 ".[clock]" "pyinstaller>=6.16" "${PINS[@]}"
 
 echo "==> DeckLink bridge"
 packaging/build_decklink.sh || echo "   (skipped — the app will build without SDI output)"
