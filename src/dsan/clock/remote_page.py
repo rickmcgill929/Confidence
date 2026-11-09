@@ -147,13 +147,36 @@ PAGE = r"""<!doctype html>
     <h2>Limitimer</h2>
     <div class="row"><label for="lt_mode">Timer</label><select class="grow" id="lt_mode"></select></div>
     <div class="status note" id="lt_status"></div>
+    <div class="row" id="lt_tprow"><label for="lt_tp">TP-2000X</label><select class="grow" id="lt_tp"></select>
+      <button id="lt_tpconnect" type="button">Connect</button></div>
     <div class="ltgrid" id="lt_keys"></div>
     <div class="lamps"><span class="lamp" id="lamp_green" title="Green"></span><span class="lamp" id="lamp_yellow" title="Yellow"></span>
       <span class="lamp" id="lamp_red" title="Red"></span><span class="readout" id="lt_readout"></span></div>
     <details id="lt_times">
-      <summary>Program times</summary>
+      <summary>Program times &amp; switches</summary>
       <div class="times" id="lt_times_grid"></div>
+      <div id="lt_switches" style="margin-top:10px">
+        <label class="switch"><input type="checkbox" data-sw="count_down"> Count down (else up)</label>
+        <label class="switch"><input type="checkbox" data-sw="continue_after_zero"> Keep counting past zero</label>
+        <label class="switch"><input type="checkbox" data-sw="permit_changes"> Allow time changes while running</label>
+        <label class="switch"><input type="checkbox" data-sw="program_minutes"> Programs 1–3 in minutes:seconds</label>
+        <label class="switch"><input type="checkbox" data-sw="session_minutes"> Session in minutes:seconds</label>
+        <label class="switch"><input type="checkbox" data-sw="beep_loud"> Loud beep</label>
+        <div class="row"><label for="lt_sound">Sound</label><select class="grow" id="lt_sound"></select></div>
+      </div>
     </details>
+  </section>
+
+  <section id="sys">
+    <h2>System</h2>
+    <div class="note" id="sys_info"></div>
+    <div class="row"><button id="sys_check" type="button">Check for updates</button>
+      <button id="sys_update" type="button" class="primary">Update</button>
+      <a id="sys_page" target="_blank" rel="noopener" style="color: var(--accent)">Release page</a></div>
+    <div class="status" id="sys_status"></div>
+    <div class="row" id="sys_power"><button id="sys_restart" type="button">Restart Confidence</button>
+      <button id="sys_reboot" type="button">Reboot</button>
+      <button id="sys_poweroff" type="button">Shut down</button></div>
   </section>
 
   <section class="wide">
@@ -315,6 +338,33 @@ function render(s) {
   setStatus($("dl_status"), k.status);
   $("dl_warning").textContent = k.warning;
   renderLimitimer(s.limitimer);
+  renderSystem(s.system);
+}
+
+let lastPhase = "";
+function renderSystem(y) {
+  $("sys_info").textContent = `Confidence ${y.version} on ${y.hostname}` + (y.headless ? " · headless" : "");
+  const busy = ["checking", "downloading", "installing", "restarting"].includes(y.phase);
+  let text = "";
+  if (y.phase === "checking") text = "Checking…";
+  else if (y.phase === "downloading") text = `Downloading ${Math.round(y.progress * 100)}%…`;
+  else if (y.phase === "installing") text = "Installing…";
+  else if (y.phase === "restarting") text = "Restarting — this page reconnects in a few seconds.";
+  else if (y.phase === "error") text = y.error;
+  else if (y.latest) text = y.available ? `Version ${y.latest} is available.` : `Up to date (latest is ${y.latest}).`;
+  $("sys_status").textContent = text;
+  $("sys_status").style.color = y.phase === "error" ? "var(--red)" : (y.available ? "var(--yellow)" : "");
+  $("sys_check").disabled = busy;
+  const upd = $("sys_update");
+  upd.style.display = y.can_update && y.available ? "" : "none";
+  upd.disabled = busy || !y.has_build;
+  upd.textContent = y.latest ? `Update to ${y.latest}` : "Update";
+  $("sys_page").href = y.page;
+  $("sys_page").style.display = y.available && !y.can_update ? "" : "none";
+  $("sys_power").style.display = y.headless ? "" : "none";
+  $("sys_reboot").style.display = $("sys_poweroff").style.display = y.can_power ? "" : "none";
+  for (const id of ["sys_restart", "sys_reboot", "sys_poweroff"]) $(id).disabled = busy;
+  lastPhase = y.phase;
 }
 
 // Limitimer console: same layout as the app (and the real console)
@@ -355,6 +405,15 @@ function renderLimitimer(L) {
   $("lamp_yellow").style.background = lamps.yellow ? "var(--yellow)" : "";
   $("lamp_red").style.background = lamps.red ? "var(--red)" : "";
   $("lt_readout").textContent = lamps.remaining || "";
+  $("lt_tprow").style.display = L.tp ? "" : "none";
+  if (L.tp) {
+    fillSelect($("lt_tp"), L.tp.ports, L.tp.port);
+    const c = $("lt_tpconnect"); c.textContent = L.tp.connected ? "Disconnect" : "Connect"; c.className = L.tp.connected ? "on" : "";
+  }
+  if (L.switches) {
+    for (const box of document.querySelectorAll("[data-sw]")) setVal(box, !!L.switches[box.dataset.sw]);
+    fillSelect($("lt_sound"), L.sounds, L.switches.beep_type);
+  }
   const times = $("lt_times");
   times.style.display = L.mode === "emulate" ? "" : "none";
   if (L.mode === "emulate" && L.programs) {
@@ -390,6 +449,22 @@ $("screen").addEventListener("change", (e) => act({ action: "output", screen: e.
 $("showout").addEventListener("click", () => act({ action: "output", shown: !state.output.shown }));
 $("demo").addEventListener("change", (e) => act({ action: "demo", on: e.target.checked }));
 $("lt_mode").addEventListener("change", (e) => act({ action: "limitimer", mode: e.target.value }));
+$("lt_tp").addEventListener("change", (e) => act({ action: "limitimer", tp_port: e.target.value }));
+$("lt_tpconnect").addEventListener("click", () => act({ action: "limitimer", tp_connect: !state.limitimer.tp.connected }));
+for (const box of document.querySelectorAll("[data-sw]"))
+  box.addEventListener("change", () => act({ action: "limitimer", switches: { [box.dataset.sw]: box.checked } }));
+$("lt_sound").addEventListener("change", (e) => act({ action: "limitimer", switches: { beep_type: e.target.value } }));
+$("sys_check").addEventListener("click", () => act({ action: "system", do: "check" }));
+$("sys_update").addEventListener("click", () => {
+  if (confirm(`Update Confidence to ${state.system.latest}? It restarts when done (a few seconds without the clock).`))
+    act({ action: "system", do: "update" });
+});
+$("sys_restart").addEventListener("click", () => { if (confirm("Restart Confidence?")) act({ action: "system", do: "restart" }); });
+$("sys_reboot").addEventListener("click", () => { if (confirm("Reboot this computer?")) act({ action: "system", do: "reboot" }); });
+$("sys_poweroff").addEventListener("click", () => {
+  if (confirm("Shut down this computer? You'll need to unplug and replug its power to start it again."))
+    act({ action: "system", do: "poweroff" });
+});
 $("mm_enabled").addEventListener("change", (e) => act({ action: "millumin", enabled: e.target.checked }));
 $("tc_enabled").addEventListener("change", (e) => act({ action: "trucue", enabled: e.target.checked }));
 $("osc_send").addEventListener("change", (e) => act({ action: "osc", send: e.target.checked }));

@@ -1,4 +1,5 @@
-# Builds Confidence for macOS (Apple silicon + Intel), Windows and Linux.
+# Builds Confidence for macOS (Apple silicon + Intel), Windows and Linux (x86_64, and arm64 for
+# Raspberry Pi — see packaging/pi/install.sh).
 # Runs on version tags (v*) or by hand from the Actions tab. The builds are
 # attached to the run as artifacts; for a version tag they're also published as
 # a GitHub Release (with that version's CHANGELOG notes), which is what the
@@ -76,18 +77,35 @@ jobs:
           path: dist/*.zip
 
   linux:
-    runs-on: ubuntu-22.04              # oldest glibc we support: runs on 22.04 and newer
+    strategy:
+      matrix:
+        # Oldest glibc we support: 22.04's (2.35) runs on Ubuntu 22.04+, Debian 12 and
+        # Raspberry Pi OS Bookworm (2.36). The arm64 build is the Raspberry Pi one (Pi 4/5, 64-bit OS).
+        runner: [ubuntu-22.04, ubuntu-22.04-arm]
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - name: Qt runtime libraries (bundled into the app)
-        run: sudo apt-get update && sudo apt-get install -y libxcb-cursor0 libxkbcommon-x11-0 libegl1 libgl1 libfontconfig1 libdbus-1-3
+        run: sudo apt-get update && sudo apt-get install -y libxcb-cursor0 libxkbcommon-x11-0 libegl1 libgl1 libfontconfig1 libdbus-1-3 libdrm2 libgbm1
       - run: PYTHON="$(which python)" packaging/build_linux.sh
+      - name: Headless start (as on a Raspberry Pi)
+        run: |
+          set -e
+          dist/Confidence/Confidence --headless --remote-port 8123 > headless.log 2>&1 &
+          pid=$!
+          for i in $(seq 40); do curl -sf localhost:8123/api/state > state.json && break; sleep 0.5; done
+          kill -TERM $pid; wait $pid || true
+          cat headless.log
+          python3 -c "import json; s=json.load(open('state.json')); assert s['system']['headless'], s['system']; print('headless OK', s['app'])"
+        env:
+          CONFIDENCE_HDMI: "off"
+          XDG_CONFIG_HOME: ${{ runner.temp }}/conf
       - uses: actions/upload-artifact@v6
         with:
-          name: Confidence-Linux-x86_64
+          name: Confidence-Linux-${{ runner.arch }}
           path: dist/*.tar.gz
 
   appcast:

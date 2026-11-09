@@ -135,7 +135,7 @@ def test_tp2000x(qapp, make_window, monkeypatch):
     p = w.lt_panel
     p.ref = portsmod.PortRef.url("socket://tp2000x:5000")
     p._connect_clicked(True)
-    assert pump(qapp, lambda: p.target() == "tp2000x")
+    assert pump(qapp, lambda: p.target() == "tp2000x" and p.keys[Key.SESSION].isEnabled())
     assert "waiting for the TP-2000X" in p.status.text()
     p.keys[Key.SESSION].click()
     p.press("start")
@@ -172,3 +172,42 @@ def test_remote_api(qapp, make_window):
         with pytest.raises(RemoteError):
             api.act({"action": "limitimer", **bad})
     assert api.state()["inputs"]["lt"]["button"] == "Send to lights"
+
+
+def test_remote_system_and_limitimer_extras(qapp, make_window, monkeypatch):
+    from dsan.clock.remote import RemoteAPI, RemoteError
+    from dsan.clock import ports as portsmod
+    w = make_window()
+    api = RemoteAPI(w)
+    st = api.state()
+    assert st["system"]["version"] and not st["system"]["can_update"]
+    with pytest.raises(RemoteError, match="Raspberry Pi install"):
+        api.act({"action": "system", "do": "update"})
+    with pytest.raises(RemoteError, match="headless"):
+        api.act({"action": "system", "do": "restart"})
+    with pytest.raises(RemoteError):
+        api.act({"action": "system", "do": "explode"})
+    # TP-2000X port from the remote (read mode)
+    st = api.state()["limitimer"]
+    assert st["tp"] == {"ports": [{"value": "", "label": "Off — not used"}] + st["tp"]["ports"][1:],
+                        "port": "", "connected": False}
+    with pytest.raises(RemoteError, match="Pick the TP-2000X"):
+        api.act({"action": "limitimer", "tp_connect": True})
+    with pytest.raises(RemoteError, match="no such port"):
+        api.act({"action": "limitimer", "tp_port": "/dev/nothing"})
+    st = api.act({"action": "limitimer", "tp_port": "socket://127.0.0.1:9"})["limitimer"]
+    assert w.lt_panel.ref is not None and st["tp"]["port"] == "socket://127.0.0.1:9"
+    with pytest.raises(RemoteError, match="software Limitimer"):
+        api.act({"action": "limitimer", "switches": {"count_down": False}})
+    api.act({"action": "limitimer", "tp_port": ""})
+    assert w.lt_panel.ref is None
+    # switches (emulate mode)
+    st = api.act({"action": "limitimer", "mode": "emulate"})["limitimer"]
+    assert "tp" not in st and st["switches"]["count_down"] is True and len(st["sounds"]) == 4
+    st = api.act({"action": "limitimer", "switches": {"count_down": False, "beep_type": "buzz"}})["limitimer"]
+    assert st["switches"]["count_down"] is False and st["switches"]["beep_type"] == "buzz"
+    assert pump(qapp, lambda: w.lt_state is not None and not w.lt_state.count_down)
+    with pytest.raises(RemoteError, match="no such sound"):
+        api.act({"action": "limitimer", "switches": {"beep_type": "siren"}})
+    with pytest.raises(RemoteError, match="real Limitimer"):
+        api.act({"action": "limitimer", "tp_connect": True})

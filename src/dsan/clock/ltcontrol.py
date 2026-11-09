@@ -501,7 +501,73 @@ class LimitimerPanel(QGroupBox):
         if self.mode == "emulate":
             out["programs"] = [{"total": t, "sumup": s} for t, s in self.emulator.programs()]
             out["selected"] = (sel.number if sel else None)
+            out["switches"] = self.switches()
+            out["sounds"] = [{"value": b.name.lower(), "label": b.name.title()} for b in lt.BeepType]
+        else:
+            out["tp"] = {"ports": self.tp_ports(), "port": self.tp_port_value(), "connected": self.want}
         return out
+
+    SWITCHES = ("count_down", "continue_after_zero", "permit_changes", "program_minutes", "session_minutes",
+                "beep_loud")
+
+    def tp_ports(self) -> List[Dict[str, str]]:
+        items = [{"value": "", "label": "Off — not used"}]
+        items += [{"value": p.device, "label": p.short_label()}
+                  for p in sorted(self.port_infos(), key=lambda p: (not p.is_usb, p.device))]
+        dev = self._resolved()
+        if self.ref and not dev:
+            items.append({"value": "__missing__",
+                          "label": f"{self.ref.description or os.path.basename(self.ref.device)} — not plugged in"})
+        elif dev and not any(i["value"] == dev for i in items):
+            items.append({"value": dev, "label": dev})
+        return items
+
+    def tp_port_value(self) -> str:
+        if not self.ref:
+            return ""
+        return self._resolved() or "__missing__"
+
+    def set_tp_port(self, value: str) -> None:
+        """'' turns it off; a device path or a socket://host:port URL picks the TP-2000X adapter."""
+        value = (value or "").strip()
+        if value == "__missing__" or value == self.tp_port_value():
+            return
+        if not value:
+            self.ref, self.want = None, False
+        elif "://" in value:
+            self.ref = portsmod.PortRef.url(value)
+        else:
+            info = next((p for p in self.port_infos() if p.device == value), None)
+            if info is None:
+                raise ValueError(f"no such port: {value}")
+            self.ref = portsmod.PortRef.of(info)
+        self._apply_control()
+        self._rebuild_ports()
+        self.refresh()
+
+    def set_connected(self, on: bool) -> None:
+        if on and not self.ref:
+            raise ValueError("Pick the TP-2000X's serial adapter first")
+        self.want = bool(on)
+        self._apply_control()
+        self.refresh()
+
+    def switches(self) -> Dict[str, object]:
+        e = self.emulator
+        out = {k: getattr(e, k) for k in self.SWITCHES}
+        out["beep_type"] = e.beep_type.name.lower()
+        return out
+
+    def set_switches(self, data: Dict[str, object]) -> None:
+        for k in self.SWITCHES:
+            if k in data:
+                setattr(self.emulator, k, bool(data[k]))
+        if "beep_type" in data:
+            try:
+                self.emulator.beep_type = lt.BeepType[str(data["beep_type"]).upper()]
+            except KeyError:
+                raise ValueError(f"no such sound: {data['beep_type']}") from None
+        self.refresh()
 
     def save(self, s):
         s.setValue("ltctl/mode", self.mode)

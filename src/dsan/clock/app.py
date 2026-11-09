@@ -132,6 +132,7 @@ class Signals(QObject):
     tc_message = pyqtSignal(str, object, bool)
     osc_message = pyqtSignal(str, object, str)
     update_result = pyqtSignal(object, object, bool)     # UpdateInfo | None, error text | None, manual
+    quit_soon = pyqtSignal()                             # restart / update from the remote (any thread)
 
 
 # ── small widgets ───────────────────────────────────────────────────────────────
@@ -414,6 +415,9 @@ class ControlWindow(QMainWindow):
         self.sig.pc_button.connect(self._on_pc_button)
         self.sig.pc_link.connect(self._on_pc_link)
         self.sig.error.connect(lambda m: self.statusBar().showMessage(m, 6000))
+        self.sig.quit_soon.connect(lambda: QTimer.singleShot(1500, QApplication.quit))   # let the reply go out
+        from .system import SystemControl
+        self.system = SystemControl(quit_app=self.sig.quit_soon.emit)
         self.sig.detect_status.connect(self._detect_note)
         self.sig.detect_done.connect(self._detect_finished)
 
@@ -431,6 +435,7 @@ class ControlWindow(QMainWindow):
         self.mm_rx = None
         self.tc_rx = None
         self.lt_bus: Optional[LimitimerBus] = None   # software Limitimer → DSAN lights
+        self.headless = False                # set by headless.setup(): no control window
         self.remote = None
         self.bonjour = None              # announces <name>.local for the remote page
         self._detecting = False
@@ -1837,7 +1842,8 @@ class ControlWindow(QMainWindow):
         self._wanted_screen = screen
         self.output_note.setStyleSheet("")
         self.output.apply(mode, screen)
-        self.activateWindow()
+        if not self.headless:
+            self.activateWindow()
         notes = {
             "window": "Resizable window. Double-click it (or press F) for full screen.",
             "fullscreen": "Covers only the chosen display. Click the output and press Esc "
@@ -2413,8 +2419,8 @@ class ControlWindow(QMainWindow):
             self.remote_enable.setChecked(True)
         if OSC_AVAILABLE and s.value("osc/in_enabled", False, type=bool):
             self.osc_in_enable.setChecked(True)
-        if s.value("output/visible", True, type=bool):
-            QTimer.singleShot(0, lambda: self.show_output_btn.setChecked(True))
+        if s.value("output/visible", True, type=bool) and os.environ.get("CONFIDENCE_HEADLESS") != "1":
+            QTimer.singleShot(0, lambda: self.show_output_btn.setChecked(True))   # headless decides itself
         self.decklink_panel.load(s)
         if self.sparkle is not None:
             self.auto_update_action.setChecked(self.sparkle.automatic)   # Sparkle keeps its own setting
@@ -2579,6 +2585,9 @@ class ControlWindow(QMainWindow):
 
 
 def main() -> int:
+    if "--headless" in sys.argv:          # Raspberry Pi / no desktop: browser remote + HDMI only
+        from .headless import run
+        return run()
     app = QApplication(sys.argv)
     app.setApplicationName("Confidence")
     app.setApplicationVersion(__version__)

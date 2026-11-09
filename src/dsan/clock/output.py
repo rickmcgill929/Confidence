@@ -135,7 +135,8 @@ class OutputWindow(QWidget):
             self.setGeometry(geo)          # some window managers adjust the first placement
             level = 1000 if overlay else 25
             self.mac_float_applied = _mac_window(self, level=level, click_through=overlay)
-        self.raise_()
+        if QGuiApplication.platformName() != "offscreen":      # (offscreen just warns)
+            self.raise_()
 
     def on_screen(self) -> Optional[str]:
         """Name of the display the output is actually on."""

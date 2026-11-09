@@ -6,6 +6,13 @@ Built apps also carry a build number (date and time of the build), shown in **Ab
 
 ## [Unreleased]
 
+## [0.13.0] — 2026-11-08
+
+### Added
+- **Confidence Pi — headless on a Raspberry Pi.** `confidence --headless` runs with no control window: the browser remote is always on, the clock goes full-screen on HDMI with no desktop (straight to the display through DRM/KMS), and SIGTERM saves and quits. A one-line installer (`packaging/pi/install.sh`) sets up a Pi 4/5 on Raspberry Pi OS Lite (64-bit) as a service that starts at power-on, with permission for USB-RS485 adapters and HDMI. Releases now include a **Linux-aarch64** build.
+- **System section on the browser remote:** version, check for updates; on a Pi install also update in place (keeps the previous version), restart Confidence, reboot and shut down.
+- The browser remote can now pick the **TP-2000X** adapter and set the **software Limitimer's switches** (count down/up, past zero, changes while running, display formats, sound).
+
 ## [0.12.0] — 2026-11-08
 
 ### Added

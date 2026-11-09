@@ -126,6 +126,7 @@ class RemoteAPI:
                        "status": _status(w.tc_status)},
             "decklink": self.decklink_state(),
             "limitimer": w.lt_panel.remote_state(),
+            "system": w.system.state(),
         }
 
     # -- DeckLink SDI output ---------------------------------------------------------
@@ -179,7 +180,7 @@ class RemoteAPI:
     # -- actions ---------------------------------------------------------------
 
     ACTIONS = ("connect", "port", "demo", "message", "clear_message", "preset", "open_layout",
-               "output", "osc", "millumin", "trucue", "decklink", "limitimer")
+               "output", "osc", "millumin", "trucue", "decklink", "limitimer", "system")
 
     def act(self, data: Dict[str, Any]) -> Dict[str, Any]:
         name = data.get("action")
@@ -321,8 +322,29 @@ class RemoteAPI:
                     w.tc_forward.setText(str(data["forward"]).strip())
             self._restart(w.tc_enable, apply, data)
 
+    def _system(self, data):
+        """{do: check | update | restart | reboot | poweroff}"""
+        sysctl = self.w.system
+        what = str(data.get("do", ""))
+        try:
+            if what == "check":
+                sysctl.check()
+            elif what == "update":
+                sysctl.update()
+            elif what == "restart":
+                if not sysctl.state()["headless"]:
+                    raise ValueError("Restart is for headless installs — quit and open Confidence instead")
+                sysctl.restart()
+            elif what in ("reboot", "poweroff"):
+                sysctl.power(what)
+            else:
+                raise RemoteError(f"unknown system action: {what!r}")
+        except ValueError as e:
+            raise RemoteError(str(e)) from None
+
     def _limitimer(self, data):
-        """{mode: read|emulate} · {key: start|p2|time+|…} · {program: 1-4, total: "5:00", sumup: "1:00"}"""
+        """{mode: read|emulate} · {key: start|p2|time+|…} · {program: 1-4, total: "5:00", sumup: "1:00"}
+        · {tp_port: device|socket://…|""} · {tp_connect: bool} · {switches: {count_down: …, beep_type: …}}"""
         from .ltcontrol import MODES, parse_time
         panel = self.w.lt_panel
         if "mode" in data:
@@ -341,11 +363,23 @@ class RemoteAPI:
             except (TypeError, ValueError) as e:
                 raise RemoteError(f"Bad program time: {e}") from None
             panel.refresh()
-        if "key" in data:
-            try:
+        try:
+            if "tp_port" in data:
+                if panel.mode != "read":
+                    raise ValueError("The TP-2000X is for the real Limitimer")
+                panel.set_tp_port(str(data["tp_port"]))
+            if "tp_connect" in data:
+                if panel.mode != "read":
+                    raise ValueError("The TP-2000X is for the real Limitimer")
+                panel.set_connected(bool(data["tp_connect"]))
+            if "switches" in data:
+                if panel.mode != "emulate" or not isinstance(data["switches"], dict):
+                    raise ValueError("Switches are for the software Limitimer")
+                panel.set_switches(data["switches"])
+            if "key" in data:
                 panel.press(str(data["key"]))
-            except ValueError as e:
-                raise RemoteError(str(e)) from None
+        except ValueError as e:
+            raise RemoteError(str(e)) from None
 
     @staticmethod
     def _select_str(combo, value, what):
