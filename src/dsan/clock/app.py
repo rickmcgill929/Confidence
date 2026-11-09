@@ -161,7 +161,7 @@ class ColorButton(QPushButton):
     def _pick(self):
         r, g, b, a = parse_color(self._value)
         opts = QColorDialog.ColorDialogOption.ShowAlphaChannel if self._alpha else QColorDialog.ColorDialogOption(0)
-        c = QColorDialog.getColor(QColor(r, g, b, a), self, "Choose colour", opts)
+        c = QColorDialog.getColor(QColor(r, g, b, a), self, "Choose color", opts)
         if c.isValid():
             v = format_color(c.red(), c.green(), c.blue(), c.alpha() if self._alpha else 255)
             self.set_value(v)
@@ -182,9 +182,9 @@ def _pct_spin(value: float) -> QDoubleSpinBox:
 
 _FIELD_LABELS = {
     "name": "Name", "visible": "Visible", "x": "Left", "y": "Top", "w": "Width", "h": "Height",
-    "bg": "Background", "radius": "Corner radius", "color": "Colour", "font": "Font", "bold": "Bold",
+    "bg": "Background", "radius": "Corner radius", "color": "Color", "font": "Font", "bold": "Bold",
     "align": "Align", "source": "Source", "mm_show": "Media timer shows", "overtime": "Count past zero (+00:20)",
-    "follow_format": "Follow DIP 2/3 format", "phase_colors": "Colour by phase",
+    "follow_format": "Follow DIP 2/3 format", "phase_colors": "Color by phase",
     "follow_blink": "Flash with Limitimer blink",
     "orientation": "Orientation", "show_idle": "Green while stopped",
     "cue_style": "Style", "hold": "Hold NEXT/PREV (s)",
@@ -192,13 +192,13 @@ _FIELD_LABELS = {
     "clock_seconds": "Show seconds", "text": "Text", "flash": "Flash",
 }
 _CHOICES = {
-    "align": [("left", "Left"), ("center", "Centre"), ("right", "Right")],
+    "align": [("left", "Left"), ("center", "Center"), ("right", "Right")],
     "source": [("selected", "Selected on Limitimer")] + [(n, f"Program {n}") for n in SOURCES[1:5]]
               + [("millumin", "Millumin"), ("trucue", "TruCue")],
     "mm_show": [("remaining", "Remaining (countdown)"), ("elapsed", "Elapsed"), ("duration", "Duration (TRT)"),
                 ("bookmark", "Next bookmark (TruCue)")],
     "orientation": [("horizontal", "Horizontal"), ("vertical", "Vertical")],
-    "cue_style": [("arrows", "Arrows ◁ ● ▷"), ("light", "Full colour light"), ("frame", "Outline frame"),
+    "cue_style": [("arrows", "Arrows ◁ ● ▷"), ("light", "Full color light"), ("frame", "Outline frame"),
                   ("text", "Text")],
     "bar_direction": [("ltr", "Left → right"), ("rtl", "Right → left"),
                       ("btt", "Bottom → top"), ("ttb", "Top → bottom")],
@@ -634,8 +634,8 @@ class ControlWindow(QMainWindow):
             a.triggered.connect(slot)
             edit_menu.addAction(a)
         align_menu = edit_menu.addMenu("Align")
-        for how, label in (("left", "Left edges"), ("hcenter", "Horizontal centres"), ("right", "Right edges"),
-                           ("top", "Top edges"), ("vcenter", "Vertical centres"), ("bottom", "Bottom edges")):
+        for how, label in (("left", "Left edges"), ("hcenter", "Horizontal centers"), ("right", "Right edges"),
+                           ("top", "Top edges"), ("vcenter", "Vertical centers"), ("bottom", "Bottom edges")):
             align_menu.addAction(label, lambda h=how: self._align(h))
 
         root = QSplitter()
@@ -2014,9 +2014,9 @@ class ControlWindow(QMainWindow):
         h.addWidget(self.redo_btn)
         h = group()
         self._align_btns = []
-        for how, tip in (("left", "Align left edges"), ("hcenter", "Align horizontal centres"),
+        for how, tip in (("left", "Align left edges"), ("hcenter", "Align horizontal centers"),
                          ("right", "Align right edges"), ("top", "Align top edges"),
-                         ("vcenter", "Align vertical centres"), ("bottom", "Align bottom edges")):
+                         ("vcenter", "Align vertical centers"), ("bottom", "Align bottom edges")):
             b = self._tool(f"align-{how}", tip, lambda _=False, h_=how: self._align(h_))
             self._align_btns.append(b)
             h.addWidget(b)
@@ -2041,7 +2041,7 @@ class ControlWindow(QMainWindow):
         for b in (self.dist_h, self.dist_v, self.match_w, self.match_h, self.fill_btn):
             h.addWidget(b)
         h = group()
-        self.snap_btn = self._tool("snap", "Smart guides: snap to edges, centres and safe areas "
+        self.snap_btn = self._tool("snap", "Smart guides: snap to edges, centers and safe areas "
                                            "(hold ⌘ while dragging to turn off)", self._editor_options, True)
         self.snap_btn.setChecked(True)
         self.safe_btn = self._tool("safe", "Show title-safe (90%) and action-safe (93%) areas",

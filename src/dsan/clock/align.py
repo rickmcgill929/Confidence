@@ -1,6 +1,6 @@
 """Alignment, distribution, sizing and snapping for the layout editor.
 
-Pure Python on normalised geometry (0-1 of the output), so it's independent of
+Pure Python on normalized geometry (0-1 of the output), so it's independent of
 Qt and of output resolution. Elements are anything with ``x, y, w, h``.
 """
 from __future__ import annotations
@@ -154,8 +154,8 @@ class SnapTargets:
 
 
 def snap_targets(others: Iterable, safe: bool = True) -> SnapTargets:
-    """Lines worth snapping to: canvas edges and centre, safe areas, other elements'
-    edges and centres."""
+    """Lines worth snapping to: canvas edges and center, safe areas, other elements'
+    edges and centers."""
     t = SnapTargets()
     for v in (0.0, 0.5, 1.0):
         t.xs.append((v, "canvas"))
@@ -200,7 +200,7 @@ def _touching(points, targets, axis: str) -> List[Guide]:
 
 
 def snap_move(r: Rect, targets: SnapTargets, threshold: float, grid: float = 0.0):
-    """Snap a moving rect (edges or centre) to targets, else to the grid.
+    """Snap a moving rect (edges or center) to targets, else to the grid.
     Returns (snapped rect, guides for every line it now touches)."""
     x, y, w, h = r
     guides: List[Guide] = []
@@ -229,7 +229,7 @@ def resize(start: Rect, handle: str, dx: float, dy: float, *, keep_aspect: bool 
     """New rect after dragging ``handle`` by (dx, dy) from ``start``.
 
     keep_aspect (Shift) holds the start proportions on corner handles;
-    from_center (Option/Alt) resizes symmetrically about the centre.
+    from_center (Option/Alt) resizes symmetrically about the center.
     Moving edges snap to ``targets`` / ``grid``. Returns (rect, guides).
     """
     x0, y0, w0, h0 = start

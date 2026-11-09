@@ -520,7 +520,7 @@ class DebugDialog(QDialog):
         self.changes_only_checkbox = cb("Changes Only", True)
         self.raw_checkbox = cb("Raw Bytes", False)
         self.zero_crc_checkbox = cb("Accept zero CRC", True,
-                                    "Go reference behaviour: a 0x0000 checksum means 'CRC disabled'.\n"
+                                    "Go reference behavior: a 0x0000 checksum means 'CRC disabled'.\n"
                                     "Uncheck to reject those packets.")
         ctrl.addStretch()
         self.stats_label = QLabel("Packets: 0 | Errors: 0")

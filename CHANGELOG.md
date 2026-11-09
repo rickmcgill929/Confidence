@@ -6,6 +6,11 @@ Built apps also carry a build number (date and time of the build), shown in **Ab
 
 ## [Unreleased]
 
+## [0.13.1] — 2026-11-09
+
+### Changed
+- American spelling throughout the app and docs: Center, Color, Gray.
+
 ## [0.13.0] — 2026-11-08
 
 ### Added
@@ -127,7 +132,7 @@ DSAN Viewer (formerly DSAN Clock).
 ### Added
 - **DeckLink SDI output with cut/fill.** Fill only, hardware keyer (fill on SDI A, key on SDI B) or a separate key output. Paced by the card's clock and genlock. Premultiplied or straight fill. Status line with reference lock and late or dropped frames. The output comes back on air at launch if it was on air at quit.
 - **Layout editor alignment tools.**
-  - Multi-select, box select, eight resize handles (Shift keeps proportions, Option resizes from the centre).
+  - Multi-select, box select, eight resize handles (Shift keeps proportions, Option resizes from the center).
   - Smart guides to the canvas, safe areas and other elements.
   - Align, distribute, match size and fill.
   - Grid, and title- and action-safe overlays.
@@ -137,7 +142,7 @@ DSAN Viewer (formerly DSAN Clock).
 - **Choosing adapters.** Port, baud and **Connect / Disconnect** for the Limitimer and the Perfect Cue separately, with live status lines. Ports refresh when adapters are plugged in, and an adapter is found again by its USB serial number if its name changes.
 - **Perfect Cue outline frame style.** Green on NEXT, red on PREV, with the width set in output pixels. New *Cue frame* preset.
 - **Progress bar direction** (left/right/up/down) and what it shows (auto, remaining, elapsed).
-- **Standalone Mac app** (`Build Mac App.command`) with an icon, a `.dmg`, and optional signing and notarisation. Windows build script and GitHub workflow (untested).
+- **Standalone Mac app** (`Build Mac App.command`) with an icon, a `.dmg`, and optional signing and notarization. Windows build script and GitHub workflow (untested).
 - **Version numbers.** One version for the whole project, a build number in each app build, the **About DSAN Viewer** box, this changelog, and `packaging/bump_version.py`.
 
 ### Changed

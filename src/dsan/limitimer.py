@@ -161,7 +161,7 @@ class LimitimerState:
     def display(self, number: int, overtime: bool = True, follow_device_format: bool = False) -> str:
         """The string a display should show, with ``+`` when a countdown is past zero.
 
-        ``follow_device_format=True`` honours DIP 2/3 (MM:SS, minutes may exceed 59,
+        ``follow_device_format=True`` honors DIP 2/3 (MM:SS, minutes may exceed 59,
         or HH:MM). Otherwise MM:SS under an hour and HH:MM:SS above.
         """
         secs = self.display_seconds(number, overtime)

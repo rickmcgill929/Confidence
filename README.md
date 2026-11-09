@@ -210,7 +210,7 @@ Names aren't case-sensitive. A single `0` argument on a trigger address is ignor
 Confidence can show what [Millumin](https://www.millumin.com) is playing. Tick **Receive Millumin feedback** in the MILLUMIN box (default port 5001), then in Millumin open the Device Manager (⌘K) → OSC, turn on **API feedback** and send it to the Confidence computer's IP address and that port.
 
 - **Layer:** follow Millumin's selected layer, or pick or type a layer name.
-- **Timers, progress bars and phase lights** get a *Millumin* source. A Millumin timer shows the time remaining (counting down), the elapsed time or the duration (TRT). Colours follow Millumin's own time script: green while playing, yellow in the last 30 s, red in the last 10 s and when frozen on the last frame. Both thresholds are set in the MILLUMIN box.
+- **Timers, progress bars and phase lights** get a *Millumin* source. A Millumin timer shows the time remaining (counting down), the elapsed time or the duration (TRT). Colors follow Millumin's own time script: green while playing, yellow in the last 30 s, red in the last 10 s and when frozen on the last frame. Both thresholds are set in the MILLUMIN box.
 - **Label tokens:** `{clip}` `{layer}` `{column}` `{trt}` `{remaining}` `{elapsed}` `{state}` (PLAYING · PAUSED · STOPPED · FREEZE) `{playmode}` (LOOP · FREEZE · empty).
 - **Columns decide what's shown.** While a column is current, its clip stays up even after the media stops, frozen where it stopped (a clip that plays out holds at 0:00). Launching the next column switches to what starts there; if that column has nothing on your layer, Millumin elements go blank. Stopping the column blanks them too.
 - **Loop and freeze** aren't in Millumin's OSC feedback, so they're worked out from the time: a jump from the end back to the start is a loop; sitting on the end without a *mediaStopped* is a freeze.
@@ -223,7 +223,7 @@ In Python: `dsan.millumin.MilluminReceiver(5001).tracker.view()` gives clip, dur
 
 Confidence can show what [TRUCUE](https://trucue.io) is playing. Tick **Receive TruCue feedback** in the TRUCUE box (default port 9017), then in TruCue go to **Settings → OSC**, turn on **Companion feedback** and set its host to the Confidence computer (127.0.0.1 if both run on the same Mac) and the same port.
 
-- **Timers, progress bars and phase lights** get a *TruCue* source. A TruCue timer shows the countdown to OUT, the elapsed time, the duration or the **countdown to the next bookmark**. Colours: green while playing, yellow and red in the last seconds (set in the TRUCUE box), and a looping clip stays green.
+- **Timers, progress bars and phase lights** get a *TruCue* source. A TruCue timer shows the countdown to OUT, the elapsed time, the duration or the **countdown to the next bookmark**. Colors: green while playing, yellow and red in the last seconds (set in the TRUCUE box), and a looping clip stays green.
 - **Label tokens:** `{tc_clip}` `{tc_index}` `{tc_next}` `{tc_prev}` `{tc_remaining}` `{tc_elapsed}` `{tc_trt}` `{tc_state}` (PLAYING · PAUSED) `{tc_playmode}` (LOOP · AUTO NEXT · AUTO FIRST) `{tc_bookmark}` `{tc_bookmark_remaining}` `{tc_volume}`. TruCue's mode marks (🔁 → ↺ B) are taken off clip names. Everything is empty when no clip is loaded.
 - **Preset:** *TruCue countdown* — clip, mode, big countdown, progress, next bookmark and its countdown, next clip.
 - **Using Companion too:** TruCue sends its feedback to one place. Point TruCue at Confidence, set Companion's TruCue module to listen on another port (e.g. 9018), and put `127.0.0.1:9018` in **Forward to** — Confidence passes every message on unchanged.
@@ -248,7 +248,7 @@ Confidence (formerly DSAN Viewer; run `confidence` after `pip install 'dsan[cloc
 | USB-RS485 #1 | Limitimer data port | 19200 8N1 (fixed) |
 | USB-RS485 #2 | Perfect Cue receiver data port | 19200 8N1 (fixed) |
 
-Wire each device's RJ45 (T-568B colours) to its own adapter. **The two pinouts differ** — pins 2 and 4 are swapped between them, so a cable made for one gives garbage on the other:
+Wire each device's RJ45 (T-568B colors) to its own adapter. **The two pinouts differ** — pins 2 and 4 are swapped between them, so a cable made for one gives garbage on the other:
 
 | RJ45 pin | Perfect Cue | Limitimer |
 |---|---|---|
@@ -292,8 +292,8 @@ If the debug console shows bytes that aren't button codes (Perfect Cue) or **Dev
 - **Overlay**: transparent, always on top and click-through, over PowerPoint, Keynote or anything else. On macOS, pyobjc (installed with the `clock` extra) lets it float over full-screen slideshows.
 
 **Layouts**
-- Elements: timer digits, phase lights, Perfect Cue indicator (◁ ● ▷ arrows, full-screen colour light, an outline frame whose width you set in output pixels, or text — green for NEXT, red for PREV, yellow while blanked), progress bar, time of day, labels (`{program}`, `{mode}` tokens) and an operator message.
-- Every element has its own colours, background with alpha, corner radius, font and alignment. Timers follow the Limitimer's selected program or a fixed program, and overtime and DIP 2/3 format are set per element.
+- Elements: timer digits, phase lights, Perfect Cue indicator (◁ ● ▷ arrows, full-screen color light, an outline frame whose width you set in output pixels, or text — green for NEXT, red for PREV, yellow while blanked), progress bar, time of day, labels (`{program}`, `{mode}` tokens) and an operator message.
+- Every element has its own colors, background with alpha, corner radius, font and alignment. Timers follow the Limitimer's selected program or a fixed program, and overtime and DIP 2/3 format are set per element.
 - Presets: *Confidence monitor*, *Corner overlay*, *Cue light*, *Cue frame* (a frame round the whole screen), *Timer + time of day*, *All four programs*, *Millumin countdown*, *Limitimer + Millumin* (both at once, with a Perfect Cue frame), *TruCue countdown*, *Limitimer + TruCue* (the same, with TRUCUE in the lower half).
 - Layouts save as JSON. Custom `.ttf`/`.otf` fonts can be bundled with a layout.
 - Digits are drawn in fixed-width cells, so a running clock never shifts sideways, whatever the font.
@@ -304,9 +304,9 @@ If the debug console shows bytes that aren't button codes (Perfect Cue) or **Dev
 |---|---|
 | Select | Click. Shift- or ⌘-click adds or removes. Drag on empty space for a selection box. ⌘A selects all, Esc clears. The element list also takes multi-select. |
 | Move | Drag. Shift locks to horizontal or vertical. Arrow keys nudge by 0.5% (Shift ×10), or by the grid step when the grid is on. |
-| Resize | Eight handles on the selected element. Shift keeps the proportions. Option resizes from the centre. Option + arrow keys resize too. |
-| Smart guides | While dragging, edges and centres snap to the canvas edges and centre, the safe areas, and other elements. Pink lines mark other elements and teal lines mark the canvas and safe areas. Hold ⌘ to drag without snapping. |
-| Toolbar | Undo / redo (⌘Z / ⇧⌘Z). Align left, centre, right, top, middle, bottom to *Auto* (one element → canvas, several → each other), *Canvas*, *Selection*, *Title safe* or *Action safe*. Distribute horizontally or vertically (3+). Match width or height to the first selected. Fill the canvas or a safe area. Grid (1–10% steps) and safe-area overlays (title 90%, action 93%). |
+| Resize | Eight handles on the selected element. Shift keeps the proportions. Option resizes from the center. Option + arrow keys resize too. |
+| Smart guides | While dragging, edges and centers snap to the canvas edges and center, the safe areas, and other elements. Pink lines mark other elements and teal lines mark the canvas and safe areas. Hold ⌘ to drag without snapping. |
+| Toolbar | Undo / redo (⌘Z / ⇧⌘Z). Align left, center, right, top, middle, bottom to *Auto* (one element → canvas, several → each other), *Canvas*, *Selection*, *Title safe* or *Action safe*. Distribute horizontally or vertically (3+). Match width or height to the first selected. Fill the canvas or a safe area. Grid (1–10% steps) and safe-area overlays (title 90%, action 93%). |
 | Readout | While dragging: position and size in % and in output pixels (the output screen or window, or the DeckLink mode when SDI is on air). |
 
 **Operator**
@@ -318,7 +318,7 @@ If the debug console shows bytes that aren't button codes (Perfect Cue) or **Dev
 
 The **LIMITIMER CONTROL** box has the Limitimer's buttons — 1 · 2 · 3 · Session, Start/Stop, Repeat, Clear, Time ±, Sum-up ±, Seconds, Beep, Blink — lit like the console (selected program bright, a program running in the background dim), with its green/yellow/red lamps and the time. The same buttons are on the browser remote and on OSC (`/dsan/limitimer/…`, above), so Bitfocus Companion or a Stream Deck can run the timer. **Timer** picks what they drive:
 
-- **Real Limitimer** — Confidence reads the console's RS-485 data as before. The RS-485 data port only *reports* the timer, so pressing its buttons from a computer needs DSAN's **TP-2000X** touch-panel adapter: wire a USB-RS232 adapter to it (RS-232, 9600 8N1 — or a serial-to-IP converter, `socket://host:port`), pick it next to **TP-2000X** and press **Connect**. Its lamps and times come back through it, too. Without one, the buttons stay greyed out.
+- **Real Limitimer** — Confidence reads the console's RS-485 data as before. The RS-485 data port only *reports* the timer, so pressing its buttons from a computer needs DSAN's **TP-2000X** touch-panel adapter: wire a USB-RS232 adapter to it (RS-232, 9600 8N1 — or a serial-to-IP converter, `socket://host:port`), pick it next to **TP-2000X** and press **Connect**. Its lamps and times come back through it, too. Without one, the buttons stay grayed out.
 - **Software Limitimer** — Confidence *is* the Limitimer: no console needed. **Programs & switches…** sets each program's total and sum-up time and the switches a console has on its back (count down/up, keep counting past zero, changes while running, minutes:seconds or hours:minutes, the lights' sound). Everything that shows a Limitimer — screen, SDI, OSC out, the browser — runs from it.
   - **Drive DSAN lights:** pick the RS-485 adapter wired to the signal lights or displays as the Limitimer's adapter in INPUTS and press **Send to lights**. Confidence sends what a console sends (status 10×/s, a ping each second, 19200 8N1). **Only with no Limitimer console on that bus** — two senders scramble each other; Confidence warns if it hears another one. Lights normally get 12 V from the console over the Cat-5 cable: without a console, power them separately (e.g. DSAN's PSL-PB6 hub). The signal-light side is built from the wire protocol and the Limitimer's own data; check it with your lights before a show.
 
@@ -339,7 +339,7 @@ Confidence can put the clock out on a Blackmagic DeckLink card as SDI, either fi
 |---|---|---|
 | Off — fill only | One SDI output. The card drops alpha, so the layout's background shows. | Any DeckLink |
 | Hardware keyer | **Fill on SDI A, key on SDI B**, frame-locked by the card (`IDeckLinkKeyer::Enable(true)`, full level) | DeckLink Duo 2, Quad 2, 4K Extreme 12G, 8K Pro G2, Studio 4K (SD), UltraStudio 4K Extreme 3 / 4K Mini / HD Mini… |
-| Separate key output | Fill on one DeckLink output, key (alpha as greyscale) on another | Any two outputs. Lock both to reference for frame accuracy |
+| Separate key output | Fill on one DeckLink output, key (alpha as grayscale) on another | Any two outputs. Lock both to reference for frame accuracy |
 
 - Use a layout with a **transparent background** for keying, such as the *Corner overlay* preset, a saved layout file, or the screen layout with its background alpha set to 0. The panel warns you if the background is opaque, since that would make the key solid.
 - **Premultiplied fill:** match it to your switcher's keyer (e.g. ATEM "Pre Multiplied Key"). By default the fill is straight, like Blackmagic's KeyerOutput sample.

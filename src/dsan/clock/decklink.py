@@ -9,7 +9,7 @@ Keying modes:
 * ``none``      fill only; the card drops alpha (the layout background shows)
 * ``external``  the card's hardware keyer: **fill on SDI A, key on SDI B**
                 (DeckLink Duo 2, Quad 2, 4K Extreme 12G, 8K Pro, UltraStudio…)
-* ``separate``  a second DeckLink output carries the key (alpha as greyscale),
+* ``separate``  a second DeckLink output carries the key (alpha as grayscale),
                 for cards without an external keyer. Lock both to reference
                 for frame-accurate alignment.
 

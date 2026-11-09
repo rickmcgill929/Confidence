@@ -170,7 +170,7 @@ def test_renderer_millumin_elements(qapp):
     Renderer().paint(p, QRectF(0, 0, 640, 360), lay, Frame())
     p.end()
     timer_box = [blank.pixelColor(x, y) for x in range(40, 600, 7) for y in range(70, 230, 7)]
-    assert len({(c.red(), c.green(), c.blue()) for c in timer_box}) == 1     # one flat colour: no digits
+    assert len({(c.red(), c.green(), c.blue()) for c in timer_box}) == 1     # one flat color: no digits
 
 
 def test_app_millumin_box(qapp, monkeypatch):

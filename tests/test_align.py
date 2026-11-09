@@ -183,9 +183,9 @@ def test_drag_moves_group_and_snaps_with_guides(win):
     a, b = win.layout_obj.find("a"), win.layout_obj.find("b")
     _mouse(cv, "press", 0.15, 0.12)
     _mouse(cv, "move", 0.208, 0.14)          # group left edge → ~0.158; no target near
-    _mouse(cv, "move", 0.249, 0.14)          # group left would be 0.199… snaps? centre 0.5 / b's edges excluded
+    _mouse(cv, "move", 0.249, 0.14)          # group left would be 0.199… snaps? center 0.5 / b's edges excluded
     assert abs((b.x - a.x) - 0.40) < 1e-3     # moved together
-    # bring A's left edge near the canvas centre line: it should snap exactly to 0.5 and draw a guide
+    # bring A's left edge near the canvas center line: it should snap exactly to 0.5 and draw a guide
     cv.set_selection(["a"], emit=True)
     _mouse(cv, "release", 0.249, 0.14)
     start_x = a.x
@@ -194,7 +194,7 @@ def test_drag_moves_group_and_snaps_with_guides(win):
     _mouse(cv, "move", cx + (0.497 - start_x), cy)
     assert abs(a.x - 0.5) < 1e-4
     lines = {(g.pos, g.kind) for g in cv._guides}
-    assert (0.5, "canvas") in lines and (0.7, "element") in lines     # left on centre, right on C
+    assert (0.5, "canvas") in lines and (0.7, "element") in lines     # left on center, right on C
     _mouse(cv, "release", 0.6, 0.2)
     assert cv._guides == []
 

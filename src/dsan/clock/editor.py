@@ -5,7 +5,7 @@ Mouse
   click               select (Shift / ⌘-click adds or removes)
   drag empty space    selection box
   drag an element     move the selection (Shift locks to horizontal / vertical)
-  drag a handle       resize (Shift keeps proportions, Option resizes from the centre)
+  drag a handle       resize (Shift keeps proportions, Option resizes from the center)
   hold ⌘ (Ctrl)       while dragging: no snapping
 
 Keys

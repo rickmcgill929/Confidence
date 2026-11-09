@@ -1,4 +1,4 @@
-"""The software Limitimer: button behaviour, wire output, and the bus sender."""
+"""The software Limitimer: button behavior, wire output, and the bus sender."""
 import time
 
 import pytest

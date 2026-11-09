@@ -2,8 +2,8 @@
 
 Pure Python (no Qt), so layouts can be built, tested and converted anywhere.
 
-Geometry is normalised: ``x, y, w, h`` are fractions (0-1) of the output, so one
-layout works at any resolution. Colours are CSS-style ``#RRGGBB`` or
+Geometry is normalized: ``x, y, w, h`` are fractions (0-1) of the output, so one
+layout works at any resolution. Colors are CSS-style ``#RRGGBB`` or
 ``#RRGGBBAA`` strings (alpha last).
 """
 from __future__ import annotations
@@ -69,7 +69,7 @@ class Element:
     mm_show: str = "remaining"     # media timer: remaining | elapsed | duration | bookmark (TruCue)
     overtime: bool = True
     follow_format: bool = False
-    phase_colors: bool = True      # colour by running / warning / expired
+    phase_colors: bool = True      # color by running / warning / expired
     follow_blink: bool = False     # flash when the Limitimer's blink flag is set
     # lights
     orientation: str = "horizontal"
@@ -134,7 +134,7 @@ class Layout:
         return next((e for e in self.elements if e.type == type_), None)
 
     def hit(self, fx: float, fy: float) -> Optional[Element]:
-        """Topmost visible element under a normalised point (last drawn = on top)."""
+        """Topmost visible element under a normalized point (last drawn = on top)."""
         for e in reversed(self.elements):
             if e.visible and e.contains(fx, fy):
                 return e
@@ -185,7 +185,7 @@ class Layout:
         return Layout.from_dict(self.to_dict())
 
 
-# -- colour strings ----------------------------------------------------------------
+# -- color strings ----------------------------------------------------------------
 
 def parse_color(text: str) -> tuple:
     """'#RGB', '#RRGGBB' or '#RRGGBBAA' → (r, g, b, a) ints. Raises ValueError."""
@@ -195,7 +195,7 @@ def parse_color(text: str) -> tuple:
     if len(s) == 6:
         s += "FF"
     if len(s) != 8:
-        raise ValueError(f"bad colour {text!r}")
+        raise ValueError(f"bad color {text!r}")
     v = int(s, 16)
     return (v >> 24) & 255, (v >> 16) & 255, (v >> 8) & 255, v & 255
 
@@ -228,7 +228,7 @@ def phase(program: Optional[Program]) -> str:
 
 
 def millumin_phase(view, yellow: float = 30.0, red: float = 10.0) -> str:
-    """Lights / colours for a media clip (Millumin or TruCue), like Millumin's own time script:
+    """Lights / colors for a media clip (Millumin or TruCue), like Millumin's own time script:
     green while playing, yellow in the last ``yellow`` seconds, red in the last ``red`` seconds
     and when frozen on the last frame. A looping clip stays green; paused / stopped are idle."""
     if view is None:
@@ -476,7 +476,7 @@ PRESETS = {
 
 
 def default_element(type_: str) -> Element:
-    """A sensible new element of a type, centred on the output."""
+    """A sensible new element of a type, centered on the output."""
     sizes = {"timer": (0.5, 0.3), "lights": (0.3, 0.1), "cue": (0.15, 0.12), "progress": (0.6, 0.03),
              "clock": (0.3, 0.1), "label": (0.4, 0.08), "message": (0.8, 0.1)}
     w, h = sizes[type_]

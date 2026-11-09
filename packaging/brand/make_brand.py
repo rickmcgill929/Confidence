@@ -4,7 +4,7 @@
 
 The mark is a countdown ring shaped like a "C": open on the right, running
 clockwise from the bottom through the top, green → yellow → red as time runs
-out — the same phase colours the app uses for timers and lights.
+out — the same phase colors the app uses for timers and lights.
 
 packaging/make_icon.py renders confidence-icon.svg into the macOS .iconset, .png and .ico.
 """
@@ -23,7 +23,7 @@ LIGHT, INK = "#ECEFF4", "#0B0E14"
 
 # Ring geometry in a 140-unit icon space. Angles: 0 = 12 o'clock, clockwise.
 CX, CY, R, W = 70, 70, 36, 15
-SEGMENTS = [(120, 292, GREEN), (296, 340, YELLOW), (344, 420, RED)]   # gaps of 4° between colours
+SEGMENTS = [(120, 292, GREEN), (296, 340, YELLOW), (344, 420, RED)]   # gaps of 4° between colors
 
 
 def _arc(cx: float, cy: float, r: float, a0: float, a1: float) -> str:
@@ -82,7 +82,7 @@ def text_path(text: str, cap_height: float, x0: float, baseline: float) -> tuple
 
 
 def logo_svg(on_light: bool) -> str:
-    """Ring + 'Confidence'. Capitals are 0.9 × the ring's outer height... kept optically centred."""
+    """Ring + 'Confidence'. Capitals are 0.9 × the ring's outer height... kept optically centered."""
     outer = R + W / 2                          # 43.5
     top, bottom = CY - outer, CY + outer       # 26.5 … 113.5
     cap = 52

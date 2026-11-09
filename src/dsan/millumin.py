@@ -128,7 +128,7 @@ class MilluminTracker:
         self.column_index: Optional[int] = None         # the launched column, if Millumin said
         self.last_message: float = 0.0
         self.received = 0
-        self.unknown: List[Tuple[str, tuple]] = []      # last few unrecognised /millumin messages
+        self.unknown: List[Tuple[str, tuple]] = []      # last few unrecognized /millumin messages
 
     # -- input -------------------------------------------------------------------
 

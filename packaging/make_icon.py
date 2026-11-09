@@ -6,7 +6,7 @@ a .png and a Windows .ico.
 macOS's iconutil turns the .iconset into Confidence.icns (build_macos.sh does this).
 
 The SVG's tile spans x 4-136 of its 140-unit box. For macOS the tile is placed on
-Apple's icon grid (824 of 1024 px, centred) so it sits right in the Dock.
+Apple's icon grid (824 of 1024 px, centered) so it sits right in the Dock.
 """
 import os
 import sys
