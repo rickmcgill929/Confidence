@@ -43,6 +43,9 @@ PAGE = r"""<!doctype html>
   button.on { background: #0E3B2E; border-color: var(--green); color: var(--green); }
   button.warn { background: #3A2A06; border-color: var(--yellow); color: var(--yellow); }
   button:disabled { opacity: .45; cursor: default; }
+  a.btnlink { display: inline-flex; align-items: center; min-height: 40px; padding: 9px 13px; border-radius: 8px;
+    font-weight: 600; text-decoration: none; border: 1px solid var(--line); background: #222935; color: var(--text); }
+  a.btnlink.primary { background: var(--accent); border-color: var(--accent); color: #062019; }
   .status { font-size: 14px; margin-top: 4px; min-height: 1.4em; }
   .note { color: var(--dim); font-size: 13px; }
   .switch { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; }
@@ -111,6 +114,10 @@ PAGE = r"""<!doctype html>
       <select class="grow" id="preset"><option value="">Load a preset…</option></select></div>
     <div class="row"><label for="saved">Saved</label>
       <select class="grow" id="saved"><option value="">Open a saved layout…</option></select></div>
+    <div class="row"><a class="btnlink primary" href="/editor" id="editlayout">Edit layout…</a>
+      <button id="importlayout" type="button">Import…</button>
+      <button id="downloadlayout" type="button">Download</button>
+      <input type="file" id="importfile" accept=".json,application/json" hidden></div>
   </section>
 
   <section>
@@ -444,6 +451,27 @@ $("msgform").addEventListener("submit", (e) => { e.preventDefault(); const t = $
 $("msgclear").addEventListener("click", () => act({ action: "clear_message" }));
 $("preset").addEventListener("change", (e) => { if (e.target.value) act({ action: "preset", name: e.target.value }); e.target.value = ""; });
 $("saved").addEventListener("change", (e) => { if (e.target.value) act({ action: "open_layout", file: e.target.value }); e.target.value = ""; });
+$("importlayout").addEventListener("click", () => $("importfile").click());
+$("importfile").addEventListener("change", async () => {
+  const f = $("importfile").files[0]; $("importfile").value = "";
+  if (!f) return;
+  if (f.size > 2 * 1024 * 1024) { toast("That file is too big for a layout (2 MB max)"); return; }
+  try {
+    const r = await api("/api/action", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "layout_import", filename: f.name, content: await f.text(), open: true }) });
+    const data = await r.json();
+    if (!r.ok) { toast(data.error || "Couldn't import that file"); return; }
+    refresh();                                       // the new layout shows under "Now"
+  } catch (e) { if (e.message !== "PIN required") toast("Couldn't reach Confidence"); }
+});
+$("downloadlayout").addEventListener("click", async () => {
+  try {
+    const r = await api("/api/layout.json"); if (!r.ok) { toast("Couldn't download"); return; }
+    const a = document.createElement("a"); a.href = URL.createObjectURL(await r.blob());
+    a.download = ((state && state.layout.name) || "layout").replace(/[\\/:*?"<>|]/g, "-") + ".json";
+    document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  } catch (e) {}
+});
 $("mode").addEventListener("change", (e) => act({ action: "output", mode: e.target.value }));
 $("screen").addEventListener("change", (e) => act({ action: "output", screen: e.target.value }));
 $("showout").addEventListener("click", () => act({ action: "output", shown: !state.output.shown }));

@@ -6,6 +6,12 @@ Built apps also carry a build number (date and time of the build), shown in **Ab
 
 ## [Unreleased]
 
+## [0.14.0] — 2026-11-09
+
+### Added
+- **Edit layouts from the browser.** The remote's Layout section has **Edit layout…**: a layout editor for a computer, tablet or phone with the live output as its canvas — drag to move, handles to resize, snapping to the canvas and other elements, arrow-key nudges; the element list (show/hide, add, duplicate, reorder, delete); the same properties as the app, colors with opacity; layout settings; Undo/Redo shared with the app; Save, Save as, New.
+- **Import and download layouts from the browser.** **Import…** saves a layout `.json` into the layouts folder (never over an existing one) and opens it; **Download** gets the current layout as `.json`.
+
 ## [0.13.1] — 2026-11-09
 
 ### Changed

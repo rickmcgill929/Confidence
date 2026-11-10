@@ -86,6 +86,32 @@ class RemoteAPI:
 
     def __init__(self, window):
         self.w = window
+        from .remote_layout import LayoutEditor
+        self.layouts = LayoutEditor(window)
+        self._schema: Optional[Dict[str, Any]] = None
+
+    # -- layout editor -----------------------------------------------------------
+
+    def layout_schema(self) -> Dict[str, Any]:
+        if self._schema is None:
+            from PyQt6.QtGui import QFontDatabase
+            from .remote_layout import schema
+            self._schema = schema(sorted(set(QFontDatabase.families())))
+        return self._schema
+
+    def layout_state(self, rev: str = "") -> Dict[str, Any]:
+        """The layout, or just {"rev", "same": true} when the page already has this revision."""
+        current = self.layouts.revision()
+        if rev and rev == current:
+            return {"rev": current, "same": True}
+        return self.layouts.state()
+
+    def _layout_errors(self, fn):
+        from .remote_layout import LayoutError
+        try:
+            return fn()
+        except LayoutError as e:
+            raise RemoteError(str(e)) from None
 
     # -- state -----------------------------------------------------------------
 
@@ -184,6 +210,10 @@ class RemoteAPI:
 
     def act(self, data: Dict[str, Any]) -> Dict[str, Any]:
         name = data.get("action")
+        if name == "layout_edit":                      # the editor page gets the layout back, not the remote state
+            return self._layout_errors(lambda: self.layouts.op(data))
+        if name == "layout_import":
+            return self._layout_errors(lambda: self.layouts.import_layout(data))
         if name not in self.ACTIONS:
             raise RemoteError(f"unknown action {name!r}")
         getattr(self, "_" + name)(data)
@@ -474,6 +504,16 @@ def _page() -> bytes:
     return PAGE.encode("utf-8")
 
 
+def _editor_page() -> bytes:
+    from .remote_editor import EDITOR
+    return EDITOR.encode("utf-8")
+
+
+_CSP = {"Content-Security-Policy": "default-src 'self'; img-src 'self' blob: data:; "
+                                   "style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'"}
+MAX_BODY = 2 * 1024 * 1024                 # imported layouts can be a few hundred KB
+
+
 class _Handler(BaseHTTPRequestHandler):
     server_version = f"Confidence/{__version__}"
     server: "_Server"
@@ -519,10 +559,32 @@ class _Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         url = urlparse(self.path)
         if url.path in ("/", "/index.html"):
-            return self._send(HTTPStatus.OK, _page(), "text/html; charset=utf-8",
-                              {"Content-Security-Policy": "default-src 'self'; img-src 'self' blob: data:; "
-                                                          "style-src 'self' 'unsafe-inline'; "
-                                                          "script-src 'self' 'unsafe-inline'"})
+            return self._send(HTTPStatus.OK, _page(), "text/html; charset=utf-8", _CSP)
+        if url.path in ("/editor", "/editor.html"):
+            return self._send(HTTPStatus.OK, _editor_page(), "text/html; charset=utf-8", _CSP)
+        if url.path == "/api/layout":
+            if self._authorised():
+                rev = parse_qs(url.query).get("rev", [""])[0]
+                self._safely(lambda: self._json(HTTPStatus.OK, self._call(lambda: self.server.api.layout_state(rev))))
+            return
+        if url.path == "/api/layout/schema":
+            if self._authorised():
+                self._safely(lambda: self._json(HTTPStatus.OK, self._call(self.server.api.layout_schema)))
+            return
+        if url.path == "/api/layout.json":
+            if self._authorised():
+                def download():
+                    text, name = self._call(lambda: (self.server.api.layouts.json_text(),
+                                                     self.server.api.w.layout_obj.name))
+                    from .remote_layout import safe_filename
+                    from urllib.parse import quote
+                    fname = safe_filename(name)
+                    plain = "".join(c if 32 <= ord(c) < 127 and c not in '"\\' else "_" for c in fname)
+                    self._send(HTTPStatus.OK, text.encode("utf-8"), "application/json; charset=utf-8",
+                               {"Content-Disposition": f"attachment; filename=\"{plain}\"; "
+                                                       f"filename*=UTF-8''{quote(fname)}"})
+                self._safely(download)
+            return
         if url.path == "/api/state":
             if self._authorised():
                 self._safely(lambda: self._json(HTTPStatus.OK, self._call(self.server.api.state)))
@@ -546,7 +608,16 @@ class _Handler(BaseHTTPRequestHandler):
         if "application/json" not in self.headers.get("Content-Type", ""):
             return self._json(HTTPStatus.UNSUPPORTED_MEDIA_TYPE, {"error": "send JSON"})
         try:
-            length = min(int(self.headers.get("Content-Length", "0")), 64 * 1024)
+            length = int(self.headers.get("Content-Length", "0"))
+            if length > MAX_BODY:
+                left = length if length <= 8 * MAX_BODY else 0      # read it off the socket so the reply arrives
+                while left > 0:
+                    chunk = self.rfile.read(min(left, 65536))
+                    if not chunk:
+                        break
+                    left -= len(chunk)
+                self.close_connection = True
+                return self._json(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, {"error": "that file is too big (2 MB max)"})
             data = json.loads(self.rfile.read(length) or b"{}")
             if not isinstance(data, dict):
                 raise ValueError

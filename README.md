@@ -373,9 +373,23 @@ Tick **Allow control from a web browser** in the REMOTE box (default port 8080) 
 
 The `.local` name is announced with Bonjour/mDNS (built into iPhone, iPad, Mac and Windows 10+; most Android phones from Android 12, otherwise use the IP address). Running more than one Confidence? Give each its own **Name** in the REMOTE box (`stage-left` → `http://stage-left.local:8080`); a name already in use gets `-2` added. Set the port to **80** for just `http://confidence.local` (on Linux, ports under 1024 need extra permission).
 
-The page shows a **live preview** of the output (about once a second) and lets you send and clear **presenter messages** (with the quick WRAP UP / 1 MINUTE / PLEASE STOP buttons), load a **preset or a saved layout** (from the layouts folder), set the **output** mode and display and show/hide it, pick each device's **adapter** and connect/disconnect it, switch **Demo** on/off, set up the **Millumin, TruCue and OSC** feeds, run the **Limitimer** (its buttons, Real or Software, and the software Limitimer's program times), and run the **DeckLink SDI output** — device, video mode, cut/fill, SDI layout, premultiplied fill, start/stop (device, mode and cut/fill are locked while on air, as in the app). Editing a layout's elements stays in the app.
+The page shows a **live preview** of the output (about once a second) and lets you send and clear **presenter messages** (with the quick WRAP UP / 1 MINUTE / PLEASE STOP buttons), load a **preset or a saved layout** (from the layouts folder), set the **output** mode and display and show/hide it, pick each device's **adapter** and connect/disconnect it, switch **Demo** on/off, set up the **Millumin, TruCue and OSC** feeds, run the **Limitimer** (its buttons, Real or Software, and the software Limitimer's program times), and run the **DeckLink SDI output** — device, video mode, cut/fill, SDI layout, premultiplied fill, start/stop (device, mode and cut/fill are locked while on air, as in the app). **Edit layout…** opens the layout editor (below).
 
 Set a **PIN** on any network you don't control: the page asks for it once and remembers it in that browser. Without one, anyone on the network who finds the page can use it. The page works over plain HTTP on your local network — don't expose the port to the internet.
+
+#### Editing and importing layouts from the browser
+
+The remote's **Layout** section has **Edit layout…**, **Import…** and **Download**:
+
+- **Import…** — pick a layout `.json` (saved from Confidence on another computer, downloaded from the remote, or sent to you). It's saved in Confidence's layouts folder — never over one that's there; a name in use gets `2` added — and opened.
+- **Download** — the layout that's on now, as a `.json` file.
+- **Edit layout…** — the layout editor, on a computer or a tablet (it works on a phone too):
+  - The canvas shows the real output, live. **Drag** an element to move it, its **handles** to resize; edges and centers snap to the canvas and other elements (pink lines; teal for the canvas). Hold **Option/Alt** to place freely, **Shift** on a corner to keep the proportions. Arrow keys nudge (Shift for bigger steps).
+  - The **element list** (top = in front): show/hide, select, **Add**, **Duplicate**, ▲ / ▼, **Delete**. **⚙ Layout settings** (or Esc) edits the layout itself — name, background, what timers do when data stops, the phase and cue colors.
+  - **Properties** are the same as in the app: position and size, colors with opacity, font, alignment, source, style…
+  - **Undo / Redo**, **Save** (to the layout's file), **Save as…** (into the layouts folder), **Import…**, **Download**, **New**.
+
+  Changes go live on the output as you make them, and the app's own editor follows — they share one Undo history. Font files are added in the app.
 
 ### Confidence Pi — headless on a Raspberry Pi
 
