@@ -1352,8 +1352,8 @@ class ControlWindow(QMainWindow):
     def _visible_ports(self) -> List[portsmod.PortInfo]:
         infos = list(self._port_infos.values())
         if not self.show_all_ports.isChecked():
-            infos = [p for p in infos if p.is_usb]
-        return sorted(infos, key=lambda p: (not p.is_usb, p.device))
+            infos = [p for p in infos if p.is_rs485]
+        return sorted(infos, key=lambda p: (not p.is_rs485, p.device))
 
     def _refresh_ports(self, force: bool = False):
         infos = portsmod.list_ports()
@@ -1384,7 +1384,7 @@ class ControlWindow(QMainWindow):
                     if p.device == other else ""
                 combo.addItem(p.short_label() + used, p.device)
             if not ports:
-                combo.addItem("No USB serial adapters found — plug one in", None)
+                combo.addItem("No USB serial adapters or RS485 HAT ports found — plug one in", None)
                 combo.model().item(combo.count() - 1).setEnabled(False)
             ref = self.refs.get(kind)
             dev = self._resolved(kind)

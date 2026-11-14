@@ -12,6 +12,7 @@ either the one remaining adapter, or the one that sees a press during detection.
 """
 from __future__ import annotations
 
+import re
 import threading
 import time
 from dataclasses import asdict, dataclass, field
@@ -19,6 +20,11 @@ from typing import Callable, Dict, Iterable, List, Optional
 
 from .. import limitimer as lt
 from .. import perfectcue as pc
+
+# On-board RS-485 UARTs that are as good as a USB adapter: the SC16IS752 on the
+# Waveshare 2-CH RS485 HAT (dtoverlay=sc16is752-spi1) shows up as ttySC0/ttySC1.
+# They have no USB identity, but their names are fixed by the device tree.
+_RS485_HAT = re.compile(r"^/dev/ttySC(\d+)$")
 
 
 @dataclass(frozen=True)
@@ -34,6 +40,17 @@ class PortInfo:
     def is_usb(self) -> bool:
         return self.vid is not None
 
+    @property
+    def hat_channel(self) -> Optional[int]:
+        """1-based channel for an RS-485 HAT port (ttySC0 → 1), else None."""
+        m = _RS485_HAT.match(self.device)
+        return int(m.group(1)) + 1 if m else None
+
+    @property
+    def is_rs485(self) -> bool:
+        """A port worth listing and probing by default: a USB adapter or an RS-485 HAT."""
+        return self.is_usb or self.hat_channel is not None
+
     def short_label(self) -> str:
         """For dropdowns: 'FT232R USB UART — cu.usbserial-A10K1 · SN A10K1'."""
         name = self.device.rsplit("/", 1)[-1]
@@ -48,15 +65,20 @@ class PortInfo:
 
 
 def list_ports(usb_only: bool = False) -> List[PortInfo]:
+    """Serial ports on this machine. ``usb_only`` keeps USB adapters and RS-485 HAT
+    ports, dropping Bluetooth, debug consoles and other on-board UARTs."""
     try:
         from serial.tools import list_ports as lp
     except ImportError:  # pragma: no cover
         return []
     out = []
     for p in lp.comports():
-        info = PortInfo(p.device, p.description or "", p.serial_number or "", p.location or "",
-                        p.vid, p.pid)
-        if info.is_usb or not usb_only:
+        desc = p.description or ""
+        m = _RS485_HAT.match(p.device)
+        if m and desc in ("", "n/a"):
+            desc = f"RS485 HAT CH{int(m.group(1)) + 1}"
+        info = PortInfo(p.device, desc, p.serial_number or "", p.location or "", p.vid, p.pid)
+        if info.is_rs485 or not usb_only:
             out.append(info)
     return out
 
@@ -221,7 +243,7 @@ def detect(ports: Optional[List[PortInfo]] = None, *, pc_baud: int = 19200,
         ports = list_ports(usb_only=True)
     out = DetectResult()
     if not ports:
-        out.notes.append("No USB serial adapters found. Check the adapters are plugged in "
+        out.notes.append("No USB serial adapters or RS485 HAT ports found. Check the adapters are plugged in "
                          "(and on macOS that the driver for CH340/CP210x adapters is installed).")
         return out
 

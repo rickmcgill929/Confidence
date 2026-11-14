@@ -151,6 +151,28 @@ def test_detect_reports_swapped_pairs_and_errors():
     assert "A/B" in text and "Resource busy" in text
 
 
+def test_rs485_hat_ports_listed_and_labelled(monkeypatch):
+    import types
+    from serial.tools import list_ports as lp
+    from dsan.clock import ports as portsmod
+
+    def fake(dev, desc="n/a", vid=None):
+        return types.SimpleNamespace(device=dev, description=desc, serial_number=None,
+                                     location=None, vid=vid, pid=None)
+    monkeypatch.setattr(lp, "comports", lambda: [
+        fake("/dev/ttyAMA10"), fake("/dev/ttySC0"), fake("/dev/ttySC1"),
+        fake("/dev/ttyUSB0", "FT232R USB UART", 0x0403)])
+
+    hat = {p.device: p for p in portsmod.list_ports(usb_only=True)}
+    assert set(hat) == {"/dev/ttySC0", "/dev/ttySC1", "/dev/ttyUSB0"}   # debug console stays hidden
+    assert hat["/dev/ttySC0"].is_rs485 and not hat["/dev/ttySC0"].is_usb
+    assert hat["/dev/ttySC1"].hat_channel == 2
+    assert hat["/dev/ttySC0"].short_label() == "RS485 HAT CH1 — ttySC0"
+    assert len(portsmod.list_ports()) == 4
+    # No USB identity, so a remembered HAT port resolves by its fixed device path.
+    assert PortRef.of(hat["/dev/ttySC1"]).resolve(hat.values()) == "/dev/ttySC1"
+
+
 def test_detect_no_ports():
     assert "No USB serial adapters" in detect([]).notes[0]
 
