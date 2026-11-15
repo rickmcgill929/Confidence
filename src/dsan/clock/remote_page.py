@@ -76,6 +76,8 @@ PAGE = r"""<!doctype html>
   .ltgrid button.lit-amber { background: #7A5A00; border-color: var(--yellow); color: #fff; }
   .lamps { display: flex; align-items: center; gap: 8px; }
   .lamp { width: 16px; height: 16px; border-radius: 50%; background: #2A303A; display: inline-block; }
+  .lttimes { margin-left: auto; text-align: right; font-size: 14px; color: var(--dim); font-variant-numeric: tabular-nums; }
+  .lttimes b { color: var(--text); } .lttimes b.su { color: var(--yellow); }
   .readout { font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; margin-left: 8px; }
   .times { display: grid; grid-template-columns: auto 1fr 1fr auto; gap: 6px 8px; align-items: center; margin-top: 8px; }
   .times input { width: 100%; min-width: 0; }
@@ -158,7 +160,8 @@ PAGE = r"""<!doctype html>
       <button id="lt_tpconnect" type="button">Connect</button></div>
     <div class="ltgrid" id="lt_keys"></div>
     <div class="lamps"><span class="lamp" id="lamp_green" title="Green"></span><span class="lamp" id="lamp_yellow" title="Yellow"></span>
-      <span class="lamp" id="lamp_red" title="Red"></span><span class="readout" id="lt_readout"></span></div>
+      <span class="lamp" id="lamp_red" title="Red"></span><span class="readout" id="lt_readout"></span>
+      <span class="lttimes" id="lt_times_now"></span></div>
     <details id="lt_times">
       <summary>Program times &amp; switches</summary>
       <div class="times" id="lt_times_grid"></div>
@@ -412,6 +415,14 @@ function renderLimitimer(L) {
   $("lamp_yellow").style.background = lamps.yellow ? "var(--yellow)" : "";
   $("lamp_red").style.background = lamps.red ? "var(--red)" : "";
   $("lt_readout").textContent = lamps.remaining || "";
+  const tn = $("lt_times_now"); tn.textContent = "";
+  if (lamps.total || lamps.sumup) {
+    for (const [label, value, cls] of [["Total", lamps.total, ""], ["Sum-up", lamps.sumup, "su"]]) {
+      const l = document.createElement("span"); l.textContent = label + " ";
+      const b = document.createElement("b"); b.textContent = value || "—"; if (cls) b.className = cls;
+      tn.append(l, b, document.createTextNode("  "));
+    }
+  }
   $("lt_tprow").style.display = L.tp ? "" : "none";
   if (L.tp) {
     fillSelect($("lt_tp"), L.tp.ports, L.tp.port);

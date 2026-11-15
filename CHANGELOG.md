@@ -6,6 +6,14 @@ Built apps also carry a build number (date and time of the build), shown in **Ab
 
 ## [Unreleased]
 
+## [0.15.0] — 2026-11-15
+
+### Added
+- **LIMITIMER CONTROL shows the selected program's Total and Sum-up time** next to the time (sum-up in yellow), from the software Limitimer, the TP-2000X or the Limitimer's own data — so Time ± and Sum-up ± show what they changed. Also on the browser remote.
+
+### Changed
+- **Waveshare RS485 HAT ports (`ttySC*`) on a Raspberry Pi count as RS-485 hardware:** they're listed with the USB adapters (no need for *Show all serial ports*), for the Limitimer, the Perfect Cue and the TP-2000X.
+
 ## [0.14.0] — 2026-11-09
 
 ### Added

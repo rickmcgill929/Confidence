@@ -76,8 +76,13 @@ def test_software_limitimer(qapp, make_window):
     assert pump(qapp, lambda: p.keys[Key.START_STOP].property("lit") == "run")
     assert p.keys[Key.PROGRAM_2].property("lit") == "on" and p.keys[Key.PROGRAM_1].property("lit") == ""
     assert p.readout.text() == w.lt_state.display(2)
+    assert pump(qapp, lambda: "10:00" in p.times.text() and "02:00" in p.times.text())   # P2: total, sum-up
+    assert "Sum-up" in p.times.text()
     p.keys[Key.TOTAL_UP].click()
-    assert pump(qapp, lambda: w.lt_state.selected.total == 660)
+    p.keys[Key.SUMUP_UP].click()
+    assert pump(qapp, lambda: w.lt_state.selected.total == 660 and w.lt_state.selected.sumup == 180)
+    assert pump(qapp, lambda: "11:00" in p.times.text() and "03:00" in p.times.text())
+    p.keys[Key.SUMUP_DOWN].click()
     rs = p.remote_state()
     assert rs["mode"] == "emulate" and rs["target"] == "emulator" and rs["selected"] == 2
     assert rs["programs"][1] == {"total": 660, "sumup": 120} and rs["lamps"]["running"]
@@ -140,8 +145,12 @@ def test_tp2000x(qapp, make_window, monkeypatch):
     p.keys[Key.SESSION].click()
     p.press("start")
     assert bytes(tp.written) == b">SESS 5E\r>STOP 66\r"
-    tp.inbox += msg("SESLEDON") + msg("P1LEDDM") + msg("REDLEDON") + msg("RTSTR=00:42")
-    assert pump(qapp, lambda: p.readout.text() == "00:42")
+    tp.inbox += (msg("SESLEDON") + msg("P1LEDDM") + msg("REDLEDON") + msg("RTSTR=00:42")
+                 + msg("TTSTR=45:00") + msg("STSTR=05:00"))
+    assert pump(qapp, lambda: p.readout.text() == "00:42" and "05:00" in p.times.text())
+    assert "45:00" in p.times.text()
+    lv = p.remote_state()["lamps"]
+    assert (lv["total"], lv["sumup"]) == ("45:00", "05:00")
     assert "buttons press the Limitimer" in p.status.text()
     assert p.keys[Key.SESSION].property("lit") == "on" and p.keys[Key.PROGRAM_1].property("lit") == "dim"
     assert p.remote_state()["lamps"]["red"]
@@ -211,3 +220,12 @@ def test_remote_system_and_limitimer_extras(qapp, make_window, monkeypatch):
         api.act({"action": "limitimer", "switches": {"beep_type": "siren"}})
     with pytest.raises(RemoteError, match="real Limitimer"):
         api.act({"action": "limitimer", "tp_connect": True})
+
+
+def test_lamps_times_from_limitimer_data():
+    from dsan.clock.ltcontrol import clock_text, lamps
+    st = lt.LimitimerState(programs=(lt.Program(1, 0x01, 300, 30, 100), lt.Program(2, 0, 5400, 600, 0),
+                                     lt.Program(3), lt.Program(4)), selected_index=1)
+    v = lamps(st)
+    assert (v["total"], v["sumup"]) == ("1:30:00", "10:00")
+    assert lamps(None)["total"] == "" and clock_text(59) == "00:59" and clock_text(-5) == "00:00"

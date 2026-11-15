@@ -56,11 +56,20 @@ def format_time(secs: int) -> str:
     return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
 
 
+def clock_text(secs: int) -> str:
+    """05:00, or 1:05:00 past an hour — like the time readout."""
+    h, rem = divmod(max(0, int(secs)), 3600)
+    m, s = divmod(rem, 60)
+    return f"{m:02d}:{s:02d}" if h == 0 else f"{h}:{m:02d}:{s:02d}"
+
+
 def lamps(state: Optional[lt.LimitimerState]) -> Dict[str, object]:
-    """What the console would light for this state (programs on/dim/off, G/Y/R…)."""
+    """What the console would light for this state (programs on/dim/off, G/Y/R…), and the
+    selected program's times."""
     if state is None:
         return {"programs": ["off"] * 4, "running": False, "beep": False, "blink": False,
-                "seconds": False, "green": False, "yellow": False, "red": False, "remaining": ""}
+                "seconds": False, "green": False, "yellow": False, "red": False, "remaining": "",
+                "total": "", "sumup": ""}
     sel = state.selected
     progs = []
     for i, p in enumerate(state.programs):
@@ -70,7 +79,8 @@ def lamps(state: Optional[lt.LimitimerState]) -> Dict[str, object]:
             "seconds": sel.sec_adjust,
             "green": active and sel.color == 0, "yellow": active and sel.color == 1,
             "red": active and sel.color == 2,
-            "remaining": state.display(sel.number)}
+            "remaining": state.display(sel.number),
+            "total": clock_text(sel.total), "sumup": clock_text(sel.sumup)}
 
 
 class ProgramsDialog(QDialog):
@@ -270,6 +280,11 @@ class LimitimerPanel(QGroupBox):
         self.readout = QLabel()
         self.readout.setStyleSheet("font-weight: 600;")
         info.addWidget(self.readout, 1)
+        self.times = QLabel()                          # the selected program's total and sum-up
+        self.times.setTextFormat(Qt.TextFormat.RichText)
+        self.times.setToolTip("The selected program's total time and its sum-up (warning) time — "
+                              "the yellow light comes on when this much is left")
+        info.addWidget(self.times)
         v.addLayout(info)
 
     # ── modes and targets ───────────────────────────────────────────────────────
@@ -434,7 +449,7 @@ class LimitimerPanel(QGroupBox):
             fb = self.feedback
             return {"programs": list(fb.programs), "running": None, "beep": fb.beep, "blink": fb.blink,
                     "seconds": fb.seconds, "green": fb.green, "yellow": fb.yellow, "red": fb.red,
-                    "remaining": fb.remaining}
+                    "remaining": fb.remaining, "total": fb.total, "sumup": fb.sumup}
         return lamps(self.state if (self.state_live or self.mode == "emulate") else None)
 
     def status_text(self):
@@ -489,6 +504,12 @@ class LimitimerPanel(QGroupBox):
                 dot.setStyleSheet(css)
         rem = view["remaining"]
         self.readout.setText(rem if rem else "")
+        total, sumup = view.get("total") or "", view.get("sumup") or ""
+        html = ("" if not (total or sumup) else
+                f"<span style='color:#8A8A8A'>Total</span> <b>{total or '—'}</b>&nbsp;&nbsp;"
+                f"<span style='color:#8A8A8A'>Sum-up</span> <b style='color:#FFB000'>{sumup or '—'}</b>")
+        if self.times.text() != html:
+            self.times.setText(html)
 
     # ── remote / settings ─────────────────────────────────────────────────────────
 
