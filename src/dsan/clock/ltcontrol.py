@@ -351,7 +351,7 @@ class LimitimerPanel(QGroupBox):
         c.blockSignals(True)
         c.clear()
         c.addItem("Off — not used", "")
-        infos = sorted(self.port_infos(), key=lambda p: (not p.is_rs485, p.device))
+        infos = sorted(self.port_infos(), key=lambda p: (not p.is_usb, p.device))
         for p in infos:
             c.addItem(p.short_label(), p.device)
         dev = self._resolved()
@@ -534,7 +534,7 @@ class LimitimerPanel(QGroupBox):
     def tp_ports(self) -> List[Dict[str, str]]:
         items = [{"value": "", "label": "Off — not used"}]
         items += [{"value": p.device, "label": p.short_label()}
-                  for p in sorted(self.port_infos(), key=lambda p: (not p.is_rs485, p.device))]
+                  for p in sorted(self.port_infos(), key=lambda p: (not p.is_usb, p.device))]
         dev = self._resolved()
         if self.ref and not dev:
             items.append({"value": "__missing__",

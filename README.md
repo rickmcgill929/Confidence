@@ -375,6 +375,8 @@ The `.local` name is announced with Bonjour/mDNS (built into iPhone, iPad, Mac a
 
 The page shows a **live preview** of the output (about once a second) and lets you send and clear **presenter messages** (with the quick WRAP UP / 1 MINUTE / PLEASE STOP buttons), load a **preset or a saved layout** (from the layouts folder), set the **output** mode and display and show/hide it, pick each device's **adapter** and connect/disconnect it, switch **Demo** on/off, set up the **Millumin, TruCue and OSC** feeds, run the **Limitimer** (its buttons, Real or Software, and the software Limitimer's program times), and run the **DeckLink SDI output** — device, video mode, cut/fill, SDI layout, premultiplied fill, start/stop (device, mode and cut/fill are locked while on air, as in the app). **Edit layout…** opens the layout editor (below).
 
+Its **System** section shows the version and checks for a newer release, with a link to it (update Confidence on its own computer).
+
 Set a **PIN** on any network you don't control: the page asks for it once and remembers it in that browser. Without one, anyone on the network who finds the page can use it. The page works over plain HTTP on your local network — don't expose the port to the internet.
 
 #### Editing and importing layouts from the browser
@@ -390,26 +392,6 @@ The remote's **Layout** section has **Edit layout…**, **Import…** and **Down
   - **Undo / Redo**, **Save** (to the layout's file), **Save as…** (into the layouts folder), **Import…**, **Download**, **New**.
 
   Changes go live on the output as you make them, and the app's own editor follows — they share one Undo history. Font files are added in the app.
-
-### Confidence Pi — headless on a Raspberry Pi
-
-A Raspberry Pi 4 or 5 makes a small Confidence box with no screen, keyboard or desktop: the clock full-screen on its HDMI, USB-RS485 adapters for the Limitimer (or the software Limitimer driving DSAN lights) and Perfect Cue, OSC for Companion — all set up from a phone at `http://confidence.local:8080`.
-
-**Install** — flash **Raspberry Pi OS Lite (64-bit)** with Raspberry Pi Imager (set a hostname, Wi-Fi or Ethernet, and SSH there), plug in HDMI and the adapters, then over SSH:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/rickmcgill929/Confidence/main/packaging/pi/install.sh | sudo bash
-```
-
-It downloads the latest **Linux-aarch64** release, installs it to `/opt/confidence`, and starts it as a service that comes back at every power-on (and restarts itself if it ever stops). At the end it prints the address to open. No internet on site? Copy the release's `Confidence-…-Linux-aarch64.tar.gz` across and run the script with `--file thatfile.tar.gz`.
-
-- **The browser remote is the control window** — always on in headless mode. Set a PIN there (or `--remote-pin` below) on shared networks. Its **System** section checks for and installs updates (the previous version is kept), restarts Confidence, and reboots or shuts down the Pi — shut down before pulling the power, to protect the SD card.
-- **HDMI**: the clock is drawn straight to the display (no desktop needed) on whatever is plugged in at start-up; with nothing on HDMI it runs without a display. Use **Raspberry Pi OS Lite**: a desktop keeps HDMI for itself (the installer notices and turns the HDMI clock off).
-- **Options** in `/etc/default/confidence` (then `sudo systemctl restart confidence`): `CONFIDENCE_HDMI=drm` (default) · `fb0` (older framebuffer, if `drm` stays black) · `off`; `CONFIDENCE_ARGS="--remote-port 80 --remote-pin 1234 --name stage-left"`.
-- **Logs**: `journalctl -u confidence -f`. **Uninstall**: the same command with `| sudo bash -s -- --uninstall` (settings are kept; add `--purge` to remove them).
-- Not on a Pi: DeckLink SDI output (Blackmagic cards need a Mac or PC). Everything else works.
-
-Any Linux box can run `confidence --headless` the same way (`--remote-port`, `--remote-pin`, `--name`); the install script also works on 64-bit Debian 12 / Ubuntu 22.04+ PCs.
 
 ### Updates and releases
 

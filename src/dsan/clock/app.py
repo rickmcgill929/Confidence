@@ -132,7 +132,6 @@ class Signals(QObject):
     tc_message = pyqtSignal(str, object, bool)
     osc_message = pyqtSignal(str, object, str)
     update_result = pyqtSignal(object, object, bool)     # UpdateInfo | None, error text | None, manual
-    quit_soon = pyqtSignal()                             # restart / update from the remote (any thread)
 
 
 # ── small widgets ───────────────────────────────────────────────────────────────
@@ -415,9 +414,8 @@ class ControlWindow(QMainWindow):
         self.sig.pc_button.connect(self._on_pc_button)
         self.sig.pc_link.connect(self._on_pc_link)
         self.sig.error.connect(lambda m: self.statusBar().showMessage(m, 6000))
-        self.sig.quit_soon.connect(lambda: QTimer.singleShot(1500, QApplication.quit))   # let the reply go out
         from .system import SystemControl
-        self.system = SystemControl(quit_app=self.sig.quit_soon.emit)
+        self.system = SystemControl()                    # the remote's System section (update check)
         self.sig.detect_status.connect(self._detect_note)
         self.sig.detect_done.connect(self._detect_finished)
 
@@ -435,7 +433,6 @@ class ControlWindow(QMainWindow):
         self.mm_rx = None
         self.tc_rx = None
         self.lt_bus: Optional[LimitimerBus] = None   # software Limitimer → DSAN lights
-        self.headless = False                # set by headless.setup(): no control window
         self.remote = None
         self.bonjour = None              # announces <name>.local for the remote page
         self._detecting = False
@@ -1352,8 +1349,8 @@ class ControlWindow(QMainWindow):
     def _visible_ports(self) -> List[portsmod.PortInfo]:
         infos = list(self._port_infos.values())
         if not self.show_all_ports.isChecked():
-            infos = [p for p in infos if p.is_rs485]
-        return sorted(infos, key=lambda p: (not p.is_rs485, p.device))
+            infos = [p for p in infos if p.is_usb]
+        return sorted(infos, key=lambda p: (not p.is_usb, p.device))
 
     def _refresh_ports(self, force: bool = False):
         infos = portsmod.list_ports()
@@ -1384,7 +1381,7 @@ class ControlWindow(QMainWindow):
                     if p.device == other else ""
                 combo.addItem(p.short_label() + used, p.device)
             if not ports:
-                combo.addItem("No USB serial adapters or RS485 HAT ports found — plug one in", None)
+                combo.addItem("No USB serial adapters found — plug one in", None)
                 combo.model().item(combo.count() - 1).setEnabled(False)
             ref = self.refs.get(kind)
             dev = self._resolved(kind)
@@ -1842,8 +1839,7 @@ class ControlWindow(QMainWindow):
         self._wanted_screen = screen
         self.output_note.setStyleSheet("")
         self.output.apply(mode, screen)
-        if not self.headless:
-            self.activateWindow()
+        self.activateWindow()
         notes = {
             "window": "Resizable window. Double-click it (or press F) for full screen.",
             "fullscreen": "Covers only the chosen display. Click the output and press Esc "
@@ -2419,8 +2415,8 @@ class ControlWindow(QMainWindow):
             self.remote_enable.setChecked(True)
         if OSC_AVAILABLE and s.value("osc/in_enabled", False, type=bool):
             self.osc_in_enable.setChecked(True)
-        if s.value("output/visible", True, type=bool) and os.environ.get("CONFIDENCE_HEADLESS") != "1":
-            QTimer.singleShot(0, lambda: self.show_output_btn.setChecked(True))   # headless decides itself
+        if s.value("output/visible", True, type=bool):
+            QTimer.singleShot(0, lambda: self.show_output_btn.setChecked(True))
         self.decklink_panel.load(s)
         if self.sparkle is not None:
             self.auto_update_action.setChecked(self.sparkle.automatic)   # Sparkle keeps its own setting
@@ -2442,7 +2438,7 @@ class ControlWindow(QMainWindow):
         if not self.auto_update_action.isChecked():
             return False
         if os.environ.get("QT_QPA_PLATFORM") == "offscreen" or os.environ.get("CONFIDENCE_NO_UPDATE_CHECK"):
-            return False                                   # tests, smoke test, headless runs
+            return False                                   # tests, smoke test
         last = self.settings.value("updates/last_check", 0.0, type=float)
         return time.time() - last >= self.UPDATE_INTERVAL
 
@@ -2585,9 +2581,6 @@ class ControlWindow(QMainWindow):
 
 
 def main() -> int:
-    if "--headless" in sys.argv:          # Raspberry Pi / no desktop: browser remote + HDMI only
-        from .headless import run
-        return run()
     app = QApplication(sys.argv)
     app.setApplicationName("Confidence")
     app.setApplicationVersion(__version__)

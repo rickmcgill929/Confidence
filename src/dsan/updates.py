@@ -8,7 +8,7 @@ Their assets are named like the build scripts name them:
 
     Confidence-<version>-macOS-arm64.dmg / -macOS-x86_64.dmg
     Confidence-<version>-Windows.zip
-    Confidence-<version>-Linux-x86_64.tar.gz / -Linux-aarch64.tar.gz
+    Confidence-<version>-Linux-x86_64.tar.gz
 
 Nothing is downloaded or installed here: the app shows what's new and opens the
 download for this computer in the browser.

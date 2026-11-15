@@ -128,7 +128,7 @@ def test_app_update_flow(qapp, monkeypatch):
     monkeypatch.setattr(QDialog, "exec", lambda self: shown.append(self) or 0)
     w = appmod.ControlWindow()
     assert w.update_action.text() == "Check for Updates…" and w.auto_update_action.isChecked()
-    assert not w._auto_update_due()                                       # never in headless runs
+    assert not w._auto_update_due()                                       # never in offscreen runs
 
     def pump(cond):
         end = time.monotonic() + 3

@@ -61,7 +61,7 @@ def load() -> Optional[SparkleUpdater]:
     Call on the main thread once the QApplication exists. Never raises.
     """
     if sys.platform != "darwin" or not getattr(sys, "frozen", False) or os.environ.get("CONFIDENCE_NO_SPARKLE") \
-            or os.environ.get("QT_QPA_PLATFORM") == "offscreen":     # smoke test / headless
+            or os.environ.get("QT_QPA_PLATFORM") == "offscreen":     # smoke test
         return None
     try:
         import objc

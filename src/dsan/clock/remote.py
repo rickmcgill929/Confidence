@@ -353,22 +353,12 @@ class RemoteAPI:
             self._restart(w.tc_enable, apply, data)
 
     def _system(self, data):
-        """{do: check | update | restart | reboot | poweroff}"""
-        sysctl = self.w.system
+        """{do: check} — look for a newer release."""
         what = str(data.get("do", ""))
+        if what != "check":
+            raise RemoteError(f"unknown system action: {what!r}")
         try:
-            if what == "check":
-                sysctl.check()
-            elif what == "update":
-                sysctl.update()
-            elif what == "restart":
-                if not sysctl.state()["headless"]:
-                    raise ValueError("Restart is for headless installs — quit and open Confidence instead")
-                sysctl.restart()
-            elif what in ("reboot", "poweroff"):
-                sysctl.power(what)
-            else:
-                raise RemoteError(f"unknown system action: {what!r}")
+            self.w.system.check()
         except ValueError as e:
             raise RemoteError(str(e)) from None
 

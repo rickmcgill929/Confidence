@@ -189,13 +189,11 @@ def test_remote_system_and_limitimer_extras(qapp, make_window, monkeypatch):
     w = make_window()
     api = RemoteAPI(w)
     st = api.state()
-    assert st["system"]["version"] and not st["system"]["can_update"]
-    with pytest.raises(RemoteError, match="Raspberry Pi install"):
-        api.act({"action": "system", "do": "update"})
-    with pytest.raises(RemoteError, match="headless"):
-        api.act({"action": "system", "do": "restart"})
-    with pytest.raises(RemoteError):
-        api.act({"action": "system", "do": "explode"})
+    assert st["system"]["version"] and st["system"]["phase"] == "idle"
+    assert set(st["system"]) == {"version", "hostname", "phase", "error", "latest", "available", "page"}
+    for gone in ("update", "restart", "reboot", "poweroff", "explode"):         # Pi-only actions are gone
+        with pytest.raises(RemoteError, match="unknown system action"):
+            api.act({"action": "system", "do": gone})
     # TP-2000X port from the remote (read mode)
     st = api.state()["limitimer"]
     assert st["tp"] == {"ports": [{"value": "", "label": "Off — not used"}] + st["tp"]["ports"][1:],

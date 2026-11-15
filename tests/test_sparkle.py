@@ -88,7 +88,7 @@ def test_never_outside_the_mac_app(monkeypatch, tmp_path):
     assert sparkle.load() is None                            # running from source
     monkeypatch.setattr(sys, "frozen", True)
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
-    assert sparkle.load() is None                            # smoke test / headless
+    assert sparkle.load() is None                            # smoke test
     monkeypatch.delenv("QT_QPA_PLATFORM")
     monkeypatch.setattr(sys, "platform", "win32")
     assert sparkle.load() is None

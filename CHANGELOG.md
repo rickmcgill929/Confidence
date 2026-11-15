@@ -6,6 +6,11 @@ Built apps also carry a build number (date and time of the build), shown in **Ab
 
 ## [Unreleased]
 
+## [0.16.0] — 2026-11-15
+
+### Removed
+- **Raspberry Pi support.** The headless mode (`--headless`), the Pi installer (`packaging/pi/install.sh`), the Linux-aarch64 build and the Waveshare RS485 HAT ports are gone; Confidence is for Mac, Windows and Linux PCs. The browser remote's System section keeps the version and *Check for updates*; updating in place, restart, reboot and shut down (Pi only) are removed.
+
 ## [0.15.0] — 2026-11-15
 
 ### Added
