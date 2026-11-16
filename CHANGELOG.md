@@ -6,6 +6,11 @@ Built apps also carry a build number (date and time of the build), shown in **Ab
 
 ## [Unreleased]
 
+## [0.17.0] — 2026-11-16
+
+### Added
+- **Waveshare 2-CH RS485 HAT.** Its two channels (`ttySC0`, `ttySC1`) are listed as *RS485 HAT CH1/CH2* alongside USB adapters and are included in **Detect adapters**, so Confidence can run from source on a Raspberry Pi desktop without USB adapters.
+
 ## [0.16.0] — 2026-11-15
 
 ### Removed

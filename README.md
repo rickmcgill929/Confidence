@@ -259,6 +259,8 @@ Wire each device's RJ45 (T-568B colors) to its own adapter. **The two pinouts di
 
 If the debug console shows bytes that aren't button codes (Perfect Cue) or **Devices → Detect adapters** reports *"data is arriving but no valid Limitimer frames"*, the data pair is probably reversed or on the wrong pins — check against this table and swap A and B.
 
+**Waveshare 2-CH RS485 HAT (Raspberry Pi).** On a Pi running the desktop, the [2-CH RS485 HAT](https://www.waveshare.com/wiki/2-CH_RS485_HAT) can stand in for the two USB adapters. Add `dtoverlay=sc16is752-spi1,int_pin=24` to `/boot/firmware/config.txt`, set the HAT's DIP switch to automatic transceiving, and reboot. Its channels appear in the port dropdowns as *RS485 HAT CH1 — ttySC0* and *RS485 HAT CH2 — ttySC1*, and **Detect adapters** probes them like USB adapters. Wire each device to a channel's A, B and GND terminals using the table above. There is no Pi build, so install Confidence there with `pip install 'dsan[clock]'` and run `confidence`.
+
 **Inputs**
 - Each device has its own **port dropdown** and **Connect / Disconnect** button; both run at a fixed 19200 8N1. The dropdown lists your USB serial adapters by name, for example *FT232R USB UART — cu.usbserial-A10K1Q2B*. *Off* forgets the adapter. *Network adapter…* takes a `socket://host:port` address for an RS-485-to-Ethernet converter.
 - Changing the port of a connected device reconnects it straight away.
