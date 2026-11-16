@@ -182,7 +182,7 @@ def _pct_spin(value: float) -> QDoubleSpinBox:
 _FIELD_LABELS = {
     "name": "Name", "visible": "Visible", "x": "Left", "y": "Top", "w": "Width", "h": "Height",
     "bg": "Background", "radius": "Corner radius", "color": "Color", "font": "Font", "bold": "Bold",
-    "align": "Align", "source": "Source", "mm_show": "Media timer shows", "overtime": "Count past zero (+00:20)",
+    "align": "Align", "source": "Source", "mm_show": "Media timer shows", "digits": "Digits", "overtime": "Count past zero (+00:20)",
     "follow_format": "Follow DIP 2/3 format", "phase_colors": "Color by phase",
     "follow_blink": "Flash with Limitimer blink",
     "orientation": "Orientation", "show_idle": "Green while stopped",
@@ -196,6 +196,8 @@ _CHOICES = {
               + [("millumin", "Millumin"), ("trucue", "TruCue")],
     "mm_show": [("remaining", "Remaining (countdown)"), ("elapsed", "Elapsed"), ("duration", "Duration (TRT)"),
                 ("bookmark", "Next bookmark (TruCue)")],
+    "digits": [("auto", "Auto (MM:SS, HH:MM:SS from an hour)"), ("hms", "HH:MM:SS"),
+               ("ms", "MM:SS (minutes past 59, e.g. 90:00)")],
     "orientation": [("horizontal", "Horizontal"), ("vertical", "Vertical")],
     "cue_style": [("arrows", "Arrows ◁ ● ▷"), ("light", "Full color light"), ("frame", "Outline frame"),
                   ("text", "Text")],

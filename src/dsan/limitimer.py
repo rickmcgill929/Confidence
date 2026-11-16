@@ -158,17 +158,24 @@ class LimitimerState:
                 secs = p.total
         return max(0, int(secs))
 
-    def display(self, number: int, overtime: bool = True, follow_device_format: bool = False) -> str:
+    def display(self, number: int, overtime: bool = True, follow_device_format: bool = False,
+                digits: str = "auto") -> str:
         """The string a display should show, with ``+`` when a countdown is past zero.
 
         ``follow_device_format=True`` honors DIP 2/3 (MM:SS, minutes may exceed 59,
-        or HH:MM). Otherwise MM:SS under an hour and HH:MM:SS above.
+        or HH:MM). Otherwise ``digits`` picks: ``"hms"`` always HH:MM:SS, ``"ms"``
+        always MM:SS (minutes may exceed 59), ``"auto"`` MM:SS under an hour and
+        HH:MM:SS above.
         """
         secs = self.display_seconds(number, overtime)
         h, rem = divmod(secs, 3600)
         m, s = divmod(rem, 60)
         if follow_device_format:
             text = f"{secs // 60:02d}:{s:02d}" if self.uses_minutes(number) else f"{h:02d}:{m:02d}"
+        elif digits == "hms":
+            text = f"{h:02d}:{m:02d}:{s:02d}"
+        elif digits == "ms":
+            text = f"{secs // 60:02d}:{s:02d}"
         else:
             text = f"{m:02d}:{s:02d}" if h == 0 else f"{h:02d}:{m:02d}:{s:02d}"
         if self.count_down and overtime and self.program(number).overtime:

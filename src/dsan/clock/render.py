@@ -261,16 +261,16 @@ class Renderer:
                 self._text(p, rect, "--:--", e, self.qcolor(layout.color("dim")).lighter(250))
             return
         if e.mm_show == "elapsed":
-            text = format_time(v.elapsed)
+            text = format_time(v.elapsed, digits=e.digits)
         elif e.mm_show == "duration":
-            text = format_time(v.duration)
+            text = format_time(v.duration, digits=e.digits)
         elif e.mm_show == "bookmark":
             bm = getattr(v, "bookmark_remaining", None)
             if bm is None:
                 return                       # no bookmark ahead (or Millumin): blank
-            text = format_time(bm, round_up=True)
+            text = format_time(bm, round_up=True, digits=e.digits)
         else:
-            text = format_time(v.remaining, round_up=True)
+            text = format_time(v.remaining, round_up=True, digits=e.digits)
         color = self._phase_color(layout, self._mm_phase(frame, e.source)) if e.phase_colors else self.qcolor(e.color)
         if not v.live and v.state != "playing":
             color = _NO_SIGNAL_DIM
@@ -286,7 +286,7 @@ class Renderer:
         if frame.state is None or prog is None:
             self._text(p, rect, "--:--", e, self.qcolor(layout.color("dim")).lighter(250))
             return
-        text = frame.state.display(prog.number, e.overtime, e.follow_format)
+        text = frame.state.display(prog.number, e.overtime, e.follow_format, e.digits)
         if self._no_signal(layout, frame):
             red = self.qcolor(layout.color("expired"))
             if layout.no_signal == "text":

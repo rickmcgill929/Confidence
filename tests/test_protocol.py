@@ -134,6 +134,15 @@ def test_display_countdown():
     assert s.display(4, follow_device_format=True) == "00:00"      # DIP 2 off → HH:MM
 
 
+def test_display_digits_choice():
+    s = make_state(program_minutes=True)
+    assert s.display(3, digits="ms") == "61:40"                    # minutes past 59
+    assert s.display(2, digits="hms") == "+00:00:20"
+    assert s.display(2, digits="ms") == "+00:20"
+    assert s.display(3, digits="hms") == "01:01:40"
+    assert s.display(3, follow_device_format=True, digits="hms") == "61:40"   # DIP format wins
+
+
 def test_display_countup():
     s = make_state(count_down=False)
     assert s.display(2) == "05:20"

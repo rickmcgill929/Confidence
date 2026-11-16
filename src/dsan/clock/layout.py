@@ -31,7 +31,7 @@ ELEMENT_TYPES: Dict[str, str] = {
 
 # Which per-type fields the editor should show (common fields are always shown).
 TYPE_FIELDS: Dict[str, List[str]] = {
-    "timer": ["source", "mm_show", "overtime", "follow_format", "phase_colors", "follow_blink", "color", "font", "bold",
+    "timer": ["source", "mm_show", "digits", "overtime", "follow_format", "phase_colors", "follow_blink", "color", "font", "bold",
               "align"],
     "lights": ["source", "orientation", "show_idle", "follow_blink"],
     "cue": ["cue_style", "hold", "frame_px"],
@@ -67,6 +67,7 @@ class Element:
     # timer / lights / progress / label
     source: str = "selected"       # "selected" follows the Limitimer, "1".."4", "millumin" or "trucue"
     mm_show: str = "remaining"     # media timer: remaining | elapsed | duration | bookmark (TruCue)
+    digits: str = "auto"           # auto (MM:SS, HH:MM:SS from an hour) | hms (always HH:MM:SS) | ms (always MM:SS)
     overtime: bool = True
     follow_format: bool = False
     phase_colors: bool = True      # color by running / warning / expired

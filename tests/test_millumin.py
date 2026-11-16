@@ -11,6 +11,9 @@ def test_format_time():
     assert format_time(65.1, round_up=True) == "1:06"
     assert format_time(0.0, round_up=True) == "0:00"
     assert format_time(3723) == "1:02:03"
+    assert format_time(3723, digits="ms") == "62:03"
+    assert format_time(65, digits="hms") == "0:01:05"
+    assert format_time(65, digits="ms") == "1:05"
 
 
 def test_selected_layer_countdown_and_states():

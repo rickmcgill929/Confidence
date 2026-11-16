@@ -6,6 +6,11 @@ Built apps also carry a build number (date and time of the build), shown in **Ab
 
 ## [Unreleased]
 
+## [0.18.0] — 2026-11-16
+
+### Added
+- **Timer digits format.** Each timer element has a **Digits** setting: *Auto* (MM:SS, HH:MM:SS from an hour, as before), always *HH:MM:SS*, or always *MM:SS* with minutes past 59. It works for Limitimer, Millumin and TruCue timers and in the web layout editor. *Follow DIP 2/3 format* still takes priority.
+
 ## [0.17.0] — 2026-11-16
 
 ### Added

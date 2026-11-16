@@ -552,3 +552,15 @@ def test_cue_frame_preset_round_trips():
     cue = lay.first("cue")
     assert (cue.cue_style, cue.frame_px, cue.w, cue.h) == ("frame", 40, 1.0, 1.0)
     assert Layout.from_json(lay.to_json()).first("cue").frame_px == 40
+
+
+def test_timer_digits_setting_round_trips_and_is_editable():
+    from dsan.clock.layout import Layout, Element, TYPE_FIELDS
+    from dsan.clock.remote_layout import schema
+    assert "digits" in TYPE_FIELDS["timer"]
+    lay = Layout(elements=[Element("timer", digits="hms")])
+    assert Layout.from_json(lay.to_json()).elements[0].digits == "hms"
+    assert Layout.from_dict({"elements": [{"type": "timer"}]}).elements[0].digits == "auto"
+    sch = schema([])
+    vals = [c["value"] for c in sch["fields"]["digits"]["choices"]]
+    assert vals == ["auto", "hms", "ms"]

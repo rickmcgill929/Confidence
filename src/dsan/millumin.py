@@ -102,14 +102,17 @@ class MilluminView:
         return "FREEZE" if self.mode == "freeze" else self.state.upper()
 
 
-def format_time(seconds: Optional[float], *, round_up: bool = False) -> str:
-    """M:SS, or H:MM:SS from an hour. ``round_up`` for countdowns (0:00 only at the very end)."""
+def format_time(seconds: Optional[float], *, round_up: bool = False, digits: str = "auto") -> str:
+    """M:SS, or H:MM:SS from an hour. ``round_up`` for countdowns (0:00 only at the very end).
+    ``digits="hms"`` always gives H:MM:SS; ``digits="ms"`` always M:SS (minutes may exceed 59)."""
     if seconds is None:
         return "--:--"
     s = max(0, int(math.ceil(seconds - 1e-6) if round_up else math.floor(seconds + 1e-6)))
     h, rem = divmod(s, 3600)
     m, s = divmod(rem, 60)
-    return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
+    if digits == "ms":
+        return f"{h * 60 + m}:{s:02d}"
+    return f"{h}:{m:02d}:{s:02d}" if h or digits == "hms" else f"{m}:{s:02d}"
 
 
 def _num(v) -> Optional[float]:
