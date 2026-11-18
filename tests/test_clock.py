@@ -564,3 +564,29 @@ def test_timer_digits_setting_round_trips_and_is_editable():
     sch = schema([])
     vals = [c["value"] for c in sch["fields"]["digits"]["choices"]]
     assert vals == ["auto", "hms", "ms"]
+
+
+def test_left_panel_width_follows_contents_and_is_remembered(monkeypatch):
+    from PyQt6 import QtWidgets
+    from PyQt6.QtCore import QSettings
+    import dsan.clock.app as appmod
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    real = appmod.QSettings
+    real("TRUCUE", "DSANClockPanel").clear()
+    monkeypatch.setattr(appmod, "QSettings", lambda *_a: real("TRUCUE", "DSANClockPanel"))
+    w = appmod.ControlWindow()
+    w.resize(1400, 900); w.show(); app.processEvents(); app.processEvents()
+    sc, left = w.left_scroll, w.left_scroll.widget()
+    assert sc.viewport().width() >= left.minimumSizeHint().width()     # nothing clipped
+    wide = QtWidgets.QLabel("X" * 70)
+    left.layout().insertWidget(0, wide); app.processEvents(); app.processEvents()
+    assert sc.viewport().width() >= left.minimumSizeHint().width()     # grows with its contents
+    wide.hide(); app.processEvents(); app.processEvents()
+    assert sc.minimumWidth() == sc.needed_width()                      # and shrinks back
+    w.root_split.setSizes([700, 700]); app.processEvents()
+    assert sc.width() == 700                                           # no cap on dragging wider
+    w._save_settings(); w.close()
+    w2 = appmod.ControlWindow(); w2.resize(1400, 900); w2.show(); app.processEvents()
+    assert w2.left_scroll.width() == 700                               # remembered
+    w2.close()
+    real("TRUCUE", "DSANClockPanel").clear()

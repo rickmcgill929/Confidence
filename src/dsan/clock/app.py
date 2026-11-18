@@ -19,7 +19,7 @@ import threading
 import time
 from typing import Dict, List, Optional
 
-from PyQt6.QtCore import QObject, QRegularExpression, QSettings, QSize, Qt, QTimer, QUrl, pyqtSignal
+from PyQt6.QtCore import QEvent, QObject, QRegularExpression, QSettings, QSize, Qt, QTimer, QUrl, pyqtSignal
 from PyQt6.QtGui import QAction, QColor, QDesktopServices, QFontDatabase, QGuiApplication, QKeySequence, \
     QRegularExpressionValidator
 from PyQt6.QtWidgets import (
@@ -405,6 +405,36 @@ class LayoutEditor(QWidget):
 
 # ── main window ─────────────────────────────────────────────────────────────────
 
+class PanelScroll(QScrollArea):
+    """The control window's left column. Its minimum width follows the panels inside it,
+    including when they grow later (port names, DeckLink devices, status text), so
+    nothing is clipped at the right; dragging the splitter can make it wider."""
+
+    MIN = 380
+
+    def __init__(self, inner: QWidget):
+        super().__init__()
+        self.setWidget(inner)
+        self.setWidgetResizable(True)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        inner.installEventFilter(self)
+        self._fit()
+
+    def needed_width(self) -> int:
+        bar = self.verticalScrollBar().sizeHint().width()
+        return max(self.MIN, self.widget().minimumSizeHint().width() + bar + 2 * self.frameWidth())
+
+    def _fit(self):
+        need = self.needed_width()
+        if self.minimumWidth() != need:
+            self.setMinimumWidth(need)
+
+    def eventFilter(self, obj, ev):
+        if obj is self.widget() and ev.type() == QEvent.Type.LayoutRequest:
+            QTimer.singleShot(0, self._fit)
+        return super().eventFilter(obj, ev)
+
+
 class ControlWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -659,16 +689,10 @@ class ControlWindow(QMainWindow):
         lv.addWidget(self._build_trucue())
         lv.addWidget(self._build_remote())
         lv.addStretch()
-        scroll = QScrollArea()
-        scroll.setWidget(left)
-        scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        # wide enough for the panels plus the vertical scroll bar, so nothing is cut off at the right
-        need = left.minimumSizeHint().width() + scroll.verticalScrollBar().sizeHint().width() + 2 * scroll.frameWidth()
-        scroll.setMinimumWidth(max(380, need))
-        scroll.setMaximumWidth(max(460, need + 40))
-        root.addWidget(scroll)
+        self.left_scroll = PanelScroll(left)
+        root.addWidget(self.left_scroll)
         root.setCollapsible(0, False)
+        self.root_split = root
 
         # right: preview + editor
         right = QWidget()
@@ -765,7 +789,9 @@ class ControlWindow(QMainWindow):
         split.setSizes([480, 300])
         rv.addWidget(split)
         root.addWidget(right)
-        root.setSizes([400, 880])
+        root.setStretchFactor(0, 0)          # extra window width goes to the preview
+        root.setStretchFactor(1, 1)
+        root.setSizes([self.left_scroll.needed_width() + 20, 880])
 
     def _row(self, *widgets, stretch_last=False) -> QHBoxLayout:
         h = QHBoxLayout()
@@ -2364,6 +2390,9 @@ class ControlWindow(QMainWindow):
         geo = s.value("window/geometry")
         if geo is not None:
             self.restoreGeometry(geo)
+        split = s.value("window/splitter")
+        if split is not None:
+            self.root_split.restoreState(split)
         for kind, key in (("lt", "inputs/limitimer"), ("pc", "inputs/perfectcue")):
             try:
                 self.refs[kind] = portsmod.PortRef.from_dict(json.loads(s.value(key, "null") or "null"))
@@ -2528,6 +2557,7 @@ class ControlWindow(QMainWindow):
     def _save_settings(self):
         s = self.settings
         s.setValue("window/geometry", self.saveGeometry())
+        s.setValue("window/splitter", self.root_split.saveState())
         self._save_ports()
         self.lt_panel.save(s)
         s.setValue("inputs/show_all", self.show_all_ports.isChecked())

@@ -6,6 +6,11 @@ Built apps also carry a build number (date and time of the build), shown in **Ab
 
 ## [Unreleased]
 
+## [0.18.1] — 2026-11-18
+
+### Fixed
+- **Left panel width.** The control window's left column now widens to fit its panels as they fill in (port names, DeckLink devices, status text), so nothing is cut off at the right. It can be dragged as wide as you like, and the width is remembered.
+
 ## [0.18.0] — 2026-11-16
 
 ### Added
